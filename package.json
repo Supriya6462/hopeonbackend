@@ -1,13 +1,15 @@
 {
   "name": "hopeonbackend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch backendfiles/server.ts",
+    "type-check": "tsc --noEmit",
+    "create-admin": "tsx backendfiles/src/scripts/createAdmin.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
-
   },
   "keywords": [],
   "author": "",
@@ -27,6 +29,15 @@
     "stripe": "^20.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^20.11.0",
+    "@types/nodemailer": "^6.4.14",
+    "nodemon": "^3.1.11",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }
