@@ -9,7 +9,7 @@ export class AuthController {
       const result = await authService.register(req.body);
       res.status(201).json({
         success: true,
-        message: "User registered successfully",
+        message: result.message,
         data: result,
       });
     } catch (error: any) {

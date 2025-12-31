@@ -9,6 +9,7 @@ export interface IUser extends Document {
   role: Role;
   phoneNumber?: string;
   image?: string;
+  isEmailVerified: boolean;
   isOrganizerApproved: boolean;
   isOrganizerRevoked: boolean;
   revokedAt?: Date;
@@ -28,6 +29,7 @@ const UserSchema = new Schema<IUser>(
     role: { type: String, enum: Object.values(Role), default: Role.DONOR, required: true },
     phoneNumber: { type: String, trim: true, default: null },
     image: { type: String, default: null },
+    isEmailVerified: { type: Boolean, default: false },
     isOrganizerApproved: { type: Boolean, default: false },
     isOrganizerRevoked: { type: Boolean, default: false },
     revokedAt: { type: Date, default: null },

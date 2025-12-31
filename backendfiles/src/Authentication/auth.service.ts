@@ -1,8 +1,10 @@
 ﻿import { User } from "../models/User.model.js";
 import { Otp } from "../models/Otp.model.js";
+import { PendingRegistration } from "../models/PendingRegistration.model.js";
 import { Role, OtpPurpose } from "../types/enums.js";
 import { hashPassword, comparePassword } from "../utils/password.util.js";
 import { generateToken } from "../utils/jwt.util.js";
+import { emailService } from "../utils/email.util.js";
 
 interface RegisterInput {
   name: string;
@@ -24,35 +26,61 @@ export class AuthService {
       throw new Error("Name, email, and password are required");
     }
 
+    // Check if user already exists in main User collection
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       throw new Error("User with this email already exists");
     }
 
+    // Check if there's already a pending registration
+    const existingPending = await PendingRegistration.findOne({ email });
+    if (existingPending) {
+      // Delete old pending registration to allow new one
+      await PendingRegistration.deleteOne({ email });
+      // Also delete old OTPs
+      await Otp.deleteMany({ email, purpose: OtpPurpose.REGISTER });
+    }
+
     const passwordHash = await hashPassword(password);
 
-    const user = await User.create({
+    // Store registration data temporarily (expires in 15 minutes)
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await PendingRegistration.create({
       name,
       email,
       passwordHash,
       phoneNumber: phoneNumber || undefined,
-      role: Role.DONOR,
-      isOrganizerApproved: false,
+      expiresAt,
     });
 
-    const token = generateToken(user._id.toString());
+    // Generate OTP (valid for 10 minutes)
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await Otp.create({
+      email,
+      otpCode,
+      purpose: OtpPurpose.REGISTER,
+      expiresAt: otpExpiresAt,
+      isUsed: false,
+    });
+
+    // Send OTP via email
+    try {
+      await emailService.sendOTP(email, otpCode, "register");
+    } catch (error) {
+      // If email fails, clean up pending registration
+      await PendingRegistration.deleteOne({ email });
+      await Otp.deleteOne({ email, otpCode });
+      throw new Error("Failed to send verification email. Please try again.");
+    }
 
     return {
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phoneNumber: user.phoneNumber,
-        image: user.image,
-        isOrganizerApproved: user.isOrganizerApproved,
-      },
-      token,
+      message:
+        "Registration initiated. Please check your email for the OTP to complete registration.",
+      email,
+      expiresIn: "10 minutes",
+      // otpCode, // Only for development - REMOVE IN PRODUCTION
     };
   }
 
@@ -66,6 +94,11 @@ export class AuthService {
     const user = await User.findOne({ email });
     if (!user) {
       throw new Error("Invalid email or password");
+    }
+
+    // Check if email is verified
+    if (!user.isEmailVerified) {
+      throw new Error("Please verify your email before logging in. Check your email for the OTP.");
     }
 
     const isPasswordValid = await comparePassword(password, user.passwordHash);
@@ -84,6 +117,7 @@ export class AuthService {
         phoneNumber: user.phoneNumber,
         image: user.image,
         isOrganizerApproved: user.isOrganizerApproved,
+        isEmailVerified: user.isEmailVerified,
       },
       token,
     };
@@ -120,6 +154,19 @@ export class AuthService {
   }
 
   async generateOTP(email: string, purpose: OtpPurpose) {
+    // For registration, check if there's pending registration
+    if (purpose === OtpPurpose.REGISTER) {
+      const pendingReg = await PendingRegistration.findOne({ email });
+      if (!pendingReg) {
+        throw new Error(
+          "No pending registration found. Please register first."
+        );
+      }
+    }
+
+    // Delete old OTPs for this email and purpose
+    await Otp.deleteMany({ email, purpose });
+
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -131,7 +178,18 @@ export class AuthService {
       isUsed: false,
     });
 
-    return { message: "OTP sent to email", otpCode };
+    // Send OTP via email
+    try {
+      await emailService.sendOTP(email, otpCode, purpose);
+    } catch (error) {
+      throw new Error("Failed to send OTP email. Please try again.");
+    }
+
+    return {
+      message: "OTP sent to your email",
+      expiresIn: "10 minutes",
+      // otpCode, // Only for development - REMOVE IN PRODUCTION
+    };
   }
 
   async verifyOTP(email: string, otpCode: string, purpose: OtpPurpose) {
@@ -147,6 +205,63 @@ export class AuthService {
       throw new Error("Invalid or expired OTP");
     }
 
+    // If purpose is registration, create the actual user
+    if (purpose === OtpPurpose.REGISTER) {
+      // Get pending registration data
+      const pendingReg = await PendingRegistration.findOne({ email });
+      if (!pendingReg) {
+        throw new Error(
+          "Registration data expired. Please register again."
+        );
+      }
+
+      // Check if user was created in the meantime
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        // Clean up
+        await PendingRegistration.deleteOne({ email });
+        await Otp.deleteOne({ _id: otp._id });
+        throw new Error("User with this email already exists");
+      }
+
+      // Create the actual user in the database
+      const user = await User.create({
+        name: pendingReg.name,
+        email: pendingReg.email,
+        passwordHash: pendingReg.passwordHash,
+        phoneNumber: pendingReg.phoneNumber,
+        role: Role.DONOR,
+        isOrganizerApproved: false,
+        isEmailVerified: true, // Already verified via OTP
+      });
+
+      // Mark OTP as used
+      otp.isUsed = true;
+      await otp.save();
+
+      // Clean up pending registration
+      await PendingRegistration.deleteOne({ email });
+
+      // Generate token
+      const token = generateToken(user._id.toString());
+
+      return {
+        message: "Registration completed successfully! You can now login.",
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          image: user.image,
+          isOrganizerApproved: user.isOrganizerApproved,
+          isEmailVerified: user.isEmailVerified,
+        },
+        token,
+      };
+    }
+
+    // For other purposes (like password reset)
     otp.isUsed = true;
     await otp.save();
 
