@@ -5,6 +5,7 @@ import {
 } from "../Authentication/auth.middleware.js";
 import { Role } from "../types/enums.js";
 import { organizerController } from "./organizer.controller.js";
+import { documentUpload, organizerDocumentFields } from "../config/multer.js";
 
 const router = Router();
 
@@ -14,6 +15,32 @@ router.post(
   authenticate,
   authorize(Role.DONOR),
   organizerController.submitApplication.bind(organizerController)
+);
+
+router.post(
+  "/apply/draft",
+  authenticate,
+  authorize(Role.DONOR),
+  organizerController.createDraftApplication.bind(organizerController)
+);
+
+router.get(
+  "/apply/draft",
+  authenticate,
+  authorize(Role.DONOR),
+  organizerController.getDraftApplication.bind(organizerController)
+);
+router.post(
+  "/apply/:applicationId/documents",
+  authenticate,
+  authorize(Role.DONOR),
+  documentUpload.fields(organizerDocumentFields),
+  organizerController.uploadDocumentsAndSubmit.bind(organizerController)
+);
+router.post(
+  "/organizer/upload_documents/:applicationId",
+  authenticate,
+  authorize(Role.DONOR),
 );
 
 // Get user's applications

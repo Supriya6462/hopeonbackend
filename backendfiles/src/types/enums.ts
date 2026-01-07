@@ -22,6 +22,7 @@ export enum CryptoNetwork {
 }
 
 export enum ApplicationStatus {
+  DRAFT = "draft",
   PENDING = "pending",
   APPROVED = "approved",
   REJECTED = "rejected",

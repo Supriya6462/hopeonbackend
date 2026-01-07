@@ -4,6 +4,7 @@ import { Campaign } from "../models/Campaign.model.js";
 import { WithdrawalRequest } from "../models/WithdrawalRequest.model.js";
 import { ApplicationStatus, Role, OrganizationType, WithdrawalStatus } from "../types/enums.js";
 import mongoose from "mongoose";
+import { uploadToS3 } from "../utils/s3Upload.util.js";
 
 interface SubmitApplicationDTO {
   organizationName: string;
@@ -13,6 +14,15 @@ interface SubmitApplicationDTO {
   website?: string;
   organizationType?: OrganizationType;
   documents?: any;
+}
+
+interface DocumentFiles {
+  governmentId?: Express.Multer.File[];
+  selfieWithId?: Express.Multer.File[];
+  registrationCertificate?: Express.Multer.File[];
+  taxId?: Express.Multer.File[];
+  addressProof?: Express.Multer.File[];
+  additionalDocuments?: Express.Multer.File[];
 }
 
 interface ApplicationFilters {
@@ -67,6 +77,149 @@ export class OrganizerService {
     return application;
   }
 
+
+  //upload documents and submit during applying
+   // Step 1: Create draft application (Form 1 - basic info)
+  async createDraftApplication(userId: string, applicationData: SubmitApplicationDTO) {
+    if (!applicationData.organizationName || !applicationData.description) {
+      throw new Error("Organization name and description are required");
+    }
+
+    if (applicationData.organizationName.trim().length < 3) {
+      throw new Error("Organization name must be at least 3 characters");
+    }
+
+    if (applicationData.description.trim().length < 20) {
+      throw new Error("Description must be at least 20 characters");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error("Invalid user ID");
+    }
+
+    const existingApp = await OrganizerApplication.findOne({
+      user: userId,
+      status: { $in: [ApplicationStatus.DRAFT, ApplicationStatus.PENDING, ApplicationStatus.APPROVED] },
+    });
+
+    if (existingApp) {
+      if (existingApp.status === ApplicationStatus.DRAFT) {
+        // Update existing draft
+        existingApp.organizationName = applicationData.organizationName.trim();
+        existingApp.description = applicationData.description.trim();
+        existingApp.contactEmail = applicationData.contactEmail;
+        existingApp.phoneNumber = applicationData.phoneNumber;
+        existingApp.website = applicationData.website;
+        existingApp.organizationType = applicationData.organizationType || OrganizationType.OTHER;
+        await existingApp.save();
+        return { application: existingApp, isUpdate: true };
+      }
+      throw new Error("You already have a pending or approved application");
+    }
+
+    const application = await OrganizerApplication.create({
+      user: userId,
+      organizationName: applicationData.organizationName.trim(),
+      description: applicationData.description.trim(),
+      contactEmail: applicationData.contactEmail,
+      phoneNumber: applicationData.phoneNumber,
+      website: applicationData.website,
+      organizationType: applicationData.organizationType || OrganizationType.OTHER,
+      status: ApplicationStatus.DRAFT,
+    });
+
+    return { application, isUpdate: false };
+  }
+
+  // Step 2: Upload documents and submit (Form 2 - documents)
+  async uploadDocumentsAndSubmit(
+    userId: string,
+    applicationId: string,
+    files: DocumentFiles
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(applicationId)) {
+      throw new Error("Invalid application ID");
+    }
+
+    const application = await OrganizerApplication.findOne({
+      _id: applicationId,
+      user: userId,
+    });
+
+    if (!application) {
+      throw new Error("Application not found");
+    }
+
+    if (application.status !== ApplicationStatus.DRAFT) {
+      throw new Error("Can only upload documents to draft applications");
+    }
+
+    // Validate required documents
+    if (!files.governmentId?.[0] || !files.selfieWithId?.[0]) {
+      throw new Error("Government ID and Selfie with ID are required");
+    }
+
+    const uploadFolder = `organizer-documents/${userId}/${applicationId}`;
+    const documents: any = {};
+
+    // Upload single documents
+    const singleDocFields = ["governmentId", "selfieWithId", "registrationCertificate", "taxId", "addressProof"] as const;
+    
+    for (const field of singleDocFields) {
+      if (files[field]?.[0]) {
+        const file = files[field]![0];
+        const result = await uploadToS3(
+          file.buffer,
+          `${uploadFolder}/${field}`,
+          file.originalname,
+          file.mimetype
+        );
+        documents[field] = {
+          url: result.url,
+          publicId: result.key,
+          uploadedAt: result.uploadedAt,
+        };
+      }
+    }
+
+    // Upload additional documents (array)
+    if (files.additionalDocuments?.length) {
+      documents.additionalDocuments = [];
+      for (const file of files.additionalDocuments) {
+        const result = await uploadToS3(
+          file.buffer,
+          `${uploadFolder}/additional`,
+          file.originalname,
+          file.mimetype
+        );
+        documents.additionalDocuments.push({
+          name: file.originalname,
+          url: result.url,
+          publicId: result.key,
+          uploadedAt: result.uploadedAt,
+        });
+      }
+    }
+
+    // Update application with documents and change status to PENDING
+    application.documents = documents;
+    application.status = ApplicationStatus.PENDING;
+    await application.save();
+
+    return application;
+  }
+
+  // Get user's draft application (for resuming Form 2)
+  async getDraftApplication(userId: string) {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error("Invalid user ID");
+    }
+
+    return OrganizerApplication.findOne({
+      user: userId,
+      status: ApplicationStatus.DRAFT,
+    }).lean();
+  }
   // Get user's applications
   async getUserApplications(userId: string) {
     // Validate ObjectId

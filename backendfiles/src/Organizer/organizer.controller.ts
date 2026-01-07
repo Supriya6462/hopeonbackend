@@ -24,6 +24,84 @@ export class OrganizerController {
             res.status(400).json({ success: false, message: error.message });
         }
     }
+     // Step 1: Create draft application (Form 1)
+  async createDraftApplication(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+
+      const result = await organizerService.createDraftApplication(
+        req.user._id.toString(),
+        req.body
+      );
+
+      res.status(201).json({
+        success: true,
+        message: result.isUpdate 
+          ? "Draft application updated" 
+          : "Draft application created. Please upload documents to complete.",
+        data: result.application,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // Step 2: Upload documents and submit (Form 2)
+  async uploadDocumentsAndSubmit(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+
+      const files = req.files as {
+        governmentId?: Express.Multer.File[];
+        selfieWithId?: Express.Multer.File[];
+        registrationCertificate?: Express.Multer.File[];
+        taxId?: Express.Multer.File[];
+        addressProof?: Express.Multer.File[];
+        additionalDocuments?: Express.Multer.File[];
+      };
+
+      const application = await organizerService.uploadDocumentsAndSubmit(
+        req.user._id.toString(),
+        req.params.applicationId,
+        files
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Documents uploaded and application submitted for review",
+        data: application,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // Get user's draft application
+  async getDraftApplication(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+
+      const application = await organizerService.getDraftApplication(
+        req.user._id.toString()
+      );
+
+      res.status(200).json({
+        success: true,
+        data: application,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
 
     // Get user's applications
     async getUserApplications(req: AuthRequest, res: Response): Promise<void> {
