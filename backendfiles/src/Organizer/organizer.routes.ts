@@ -1,11 +1,8 @@
 import { Router } from "express";
-import {
-  authenticate,
-  authorize,
-} from "../Authentication/auth.middleware.js";
 import { Role } from "../types/enums.js";
 import { organizerController } from "./organizer.controller.js";
 import { documentUpload, organizerDocumentFields } from "../config/multer.js";
+import { authenticate, authorize } from "../middleware/auth.middleware.js";
 
 const router = Router();
 

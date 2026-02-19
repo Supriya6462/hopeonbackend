@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { AuthRequest } from "../Authentication/auth.middleware";
+import { AuthRequest } from "../middleware/auth.middleware";
 import { campaignService } from "./campaign.service";
 
 export class CampaignController {

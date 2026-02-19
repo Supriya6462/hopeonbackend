@@ -3,7 +3,7 @@ import {
   authenticate,
   authorize,
   requireApprovedOrganizer,
-} from "../Authentication/auth.middleware.js";
+} from "../middleware/auth.middleware.js";
 import { Role } from "../types/enums.js";
 import { CampaignController } from "./campaign.controller.js";
 

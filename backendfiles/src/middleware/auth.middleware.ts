@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
 import { User, IUser } from "../models/User.model.js";
 import { Role } from "../types/enums.js";
+import { ApiError } from "../utils/ApiError.js";
+import { verifyAccessToken } from "../utils/generateTokens.js";
 
 export interface AuthRequest extends Request {
   user?: IUser;
@@ -10,31 +11,27 @@ export interface AuthRequest extends Request {
 // Verify JWT token and attach user to request
 export const authenticate = async (
   req: AuthRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
     const token = req.headers.authorization?.split(" ")[1]; // Bearer <token>
 
     if (!token) {
-      res.status(401).json({ message: "Authentication required" });
-      return;
+    throw new ApiError("Authentication required", 401, "AUTH_REQUIRED");
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-      userId: string;
-    };
+    const decoded = verifyAccessToken(token);
     const user = await User.findById(decoded.userId).select("-passwordHash");
 
     if (!user) {
-      res.status(401).json({ message: "User not found" });
-      return;
+    throw new ApiError("User not found", 401, "AUTH_USER_NOT_FOUND");
     }
 
     req.user = user as IUser;
     next();
   } catch (error) {
-    res.status(401).json({ message: "Invalid or expired token" });
+    next(error);
   }
 };
 

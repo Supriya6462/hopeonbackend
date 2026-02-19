@@ -1,25 +1,25 @@
 import { Router } from "express";
-import { authController } from "./auth.controller.js";
-import { authenticate } from "./auth.middleware.js";
+import { authenticate } from "../middleware/auth.middleware.js";
+import { getProfile, login, logout, register, requestOTP, updateProfile, verifyOTP } from "./auth.controller.js";
 
 const router = Router();
 
 // Public routes
-router.post("/register", authController.register.bind(authController));
-router.post("/login", authController.login.bind(authController));
-router.post("/request-otp", authController.requestOTP.bind(authController));
-router.post("/verify-otp", authController.verifyOTP.bind(authController));
+router.post("/register", register);
+router.post("/login", login);
+router.post("/request-otp", requestOTP);
+router.post("/verify-otp", verifyOTP);
 
 // Protected routes
 router.get(
   "/profile",
   authenticate,
-  authController.getProfile.bind(authController)
+  getProfile
 );
 router.put(
   "/profile",
   authenticate,
-  authController.updateProfile.bind(authController)
+  updateProfile
 );
-
+router.post("/logout",authenticate,logout);
 export default router;

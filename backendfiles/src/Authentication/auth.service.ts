@@ -5,6 +5,7 @@ import { Role, OtpPurpose } from "../types/enums.js";
 import { hashPassword, comparePassword } from "../utils/password.util.js";
 import { generateToken } from "../utils/jwt.util.js";
 import { emailService } from "../utils/email.util.js";
+import { ApiError } from "../utils/ApiError.js";
 
 interface RegisterInput {
   name: string;
@@ -23,13 +24,13 @@ export class AuthService {
     const { name, email, password, phoneNumber } = data;
 
     if (!name || !email || !password) {
-      throw new Error("Name, email, and password are required");
+      throw new ApiError("Name, email, and password are required",400, "All_fields_are_required");
     }
 
     // Check if user already exists in main User collection
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      throw new Error("User with this email already exists");
+      throw new ApiError("User with this email already exists",409, "User_already_exist");
     }
 
     // Check if there's already a pending registration
@@ -67,12 +68,12 @@ export class AuthService {
 
     // Send OTP via email
     try {
-      await emailService.sendOTP(email, otpCode, "register");
+      await emailService.sendOTP(email, otpCode, OtpPurpose.REGISTER);
     } catch (error) {
       // If email fails, clean up pending registration
       await PendingRegistration.deleteOne({ email });
       await Otp.deleteOne({ email, otpCode });
-      throw new Error("Failed to send verification email. Please try again.");
+      throw new ApiError("Failed to send verification email. Please try again.",429,"OTP_TOO_MANY_REQUESTS");
     }
 
     return {
@@ -88,24 +89,24 @@ export class AuthService {
     const { email, password } = data;
 
     if (!email || !password) {
-      throw new Error("Email and password are required");
+      throw new ApiError("Email and password are required",401,"Email_and_password_are_required");
     }
 
     const user = await User.findOne({ email });
     if (!user) {
-      throw new Error("Invalid email or password");
+      throw new ApiError("Invalid email or password",400,"USER_INVALID_INPUT");
     }
 
     // Check if email is verified
     if (!user.isEmailVerified) {
-      throw new Error("Please verify your email before logging in. Check your email for the OTP.");
+      throw new ApiError("Please verify your email before logging in. Check your email for the OTP.",403,"AUTH_EMAIL_NOT_VERIFIED");
     }
 
     const isPasswordValid = await comparePassword(password, user.passwordHash);
     if (!isPasswordValid) {
-      throw new Error("Invalid email or password");
+      throw new ApiError("Invalid email or password",400,"USER_INVALID_INPUT");
     }
-
+    
     const token = generateToken(user._id.toString());
 
     return {
@@ -126,7 +127,7 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await User.findById(userId).select("-passwordHash");
     if (!user) {
-      throw new Error("User not found");
+      throw new ApiError("User not found",404,"USER_NOT_FOUND");
     }
     return user;
   }
@@ -147,7 +148,7 @@ export class AuthService {
     ).select("-passwordHash");
 
     if (!user) {
-      throw new Error("User not found");
+      throw new ApiError("User not found",404,"USER_NOT_FOUND");
     }
 
     return user;
@@ -158,8 +159,8 @@ export class AuthService {
     if (purpose === OtpPurpose.REGISTER) {
       const pendingReg = await PendingRegistration.findOne({ email });
       if (!pendingReg) {
-        throw new Error(
-          "No pending registration found. Please register first."
+        throw new ApiError(
+          "No pending registration found. Please register first.",400,"REGISTRATION_PENDING_NOT_FOUND"
         );
       }
     }
@@ -182,7 +183,7 @@ export class AuthService {
     try {
       await emailService.sendOTP(email, otpCode, purpose);
     } catch (error) {
-      throw new Error("Failed to send OTP email. Please try again.");
+      throw new ApiError("Failed to send OTP email. Please try again.", 429, "OTP_TOO_MANY_REQUESTS");
     }
 
     return {
@@ -202,7 +203,7 @@ export class AuthService {
     });
 
     if (!otp) {
-      throw new Error("Invalid or expired OTP");
+      throw new ApiError("Invalid or expired OTP",400, "OTP_EXPIRED");
     }
 
     // If purpose is registration, create the actual user
@@ -210,8 +211,8 @@ export class AuthService {
       // Get pending registration data
       const pendingReg = await PendingRegistration.findOne({ email });
       if (!pendingReg) {
-        throw new Error(
-          "Registration data expired. Please register again."
+        throw new ApiError(
+          "Registration data expired. Please register again.",500,"REGISTRATION_EMAIL_FAILED"
         );
       }
 
@@ -221,7 +222,7 @@ export class AuthService {
         // Clean up
         await PendingRegistration.deleteOne({ email });
         await Otp.deleteOne({ _id: otp._id });
-        throw new Error("User with this email already exists");
+        throw new ApiError("User with this email already exists",409, "USER_ALREADY_EXISTS");
       }
 
       // Create the actual user in the database
@@ -266,6 +267,10 @@ export class AuthService {
     await otp.save();
 
     return { message: "OTP verified successfully" };
+  }
+
+  async logout() {
+
   }
 }
 

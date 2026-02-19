@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   authenticate,
   authorize,
-} from "../Authentication/auth.middleware.js";
+} from "../middleware/auth.middleware.js";
 import { donationController } from "./donation.controller.js";
 import { Role } from "../types/enums.js";
 
