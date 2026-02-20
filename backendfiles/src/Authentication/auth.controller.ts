@@ -166,6 +166,17 @@ export const login = asyncHandler(async(req: Request, res: Response)=> {
   });
 });
 
+export const Alluserlist = asyncHandler(async(req:Request, res: Response)=> {
+  const { users, pagination} = await authService.getalluser(req.query);
+  sendResponse(res, {
+    statusCode:200,
+    message: "Fetched all data successfully",
+    data: {users},
+    meta: { pagination }
+
+  });
+});
+
 export const getProfile = asyncHandler(async(req: Request, res: Response)=> {
   const result = await authService.getProfile(req.user!._id.toString());
   sendResponse(res, {

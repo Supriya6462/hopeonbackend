@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { authenticate } from "../middleware/auth.middleware.js";
-import { getProfile, login, logout, register, requestOTP, updateProfile, verifyOTP } from "./auth.controller.js";
+import { authenticate, authorize } from "../middleware/auth.middleware.js";
+import { Alluserlist, getProfile, login, logout, register, requestOTP, updateProfile, verifyOTP } from "./auth.controller.js";
+import { Role } from "../types/enums.js";
 
 const router = Router();
 
@@ -11,6 +12,8 @@ router.post("/request-otp", requestOTP);
 router.post("/verify-otp", verifyOTP);
 
 // Protected routes
+
+router.get("/alluserdata",authenticate,authorize(Role.ADMIN),Alluserlist);
 router.get(
   "/profile",
   authenticate,

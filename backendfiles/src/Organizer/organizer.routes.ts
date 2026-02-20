@@ -1,6 +1,19 @@
 import { Router } from "express";
 import { Role } from "../types/enums.js";
-import { organizerController } from "./organizer.controller.js";
+import { 
+  submitApplication,
+  createDraftApplication,
+  getDraftApplication,
+  uploadDocumentsAndSubmit,
+  getUserApplications,
+  getAllApplications,
+  getApplicationById,
+  approveApplication,
+  rejectApplication,
+  getAllOrganizers,
+  revokeOrganizer,
+  reinstateOrganizer
+} from "./organizer.controller.js";
 import { documentUpload, organizerDocumentFields } from "../config/multer.js";
 import { authenticate, authorize } from "../middleware/auth.middleware.js";
 
@@ -11,40 +24,36 @@ router.post(
   "/apply",
   authenticate,
   authorize(Role.DONOR),
-  organizerController.submitApplication.bind(organizerController)
+  submitApplication
 );
 
 router.post(
   "/apply/draft",
   authenticate,
   authorize(Role.DONOR),
-  organizerController.createDraftApplication.bind(organizerController)
+  createDraftApplication
 );
 
 router.get(
   "/apply/draft",
   authenticate,
   authorize(Role.DONOR),
-  organizerController.getDraftApplication.bind(organizerController)
+  getDraftApplication
 );
+
 router.post(
   "/apply/:applicationId/documents",
   authenticate,
   authorize(Role.DONOR),
   documentUpload.fields(organizerDocumentFields),
-  organizerController.uploadDocumentsAndSubmit.bind(organizerController)
-);
-router.post(
-  "/organizer/upload_documents/:applicationId",
-  authenticate,
-  authorize(Role.DONOR),
+  uploadDocumentsAndSubmit
 );
 
 // Get user's applications
 router.get(
   "/my-applications",
   authenticate,
-  organizerController.getUserApplications.bind(organizerController)
+  getUserApplications
 );
 
 // Admin - Get all applications
@@ -52,7 +61,7 @@ router.get(
   "/applications",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.getAllApplications.bind(organizerController)
+  getAllApplications
 );
 
 // Admin - Get single application
@@ -60,7 +69,7 @@ router.get(
   "/applications/:id",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.getApplicationById.bind(organizerController)
+  getApplicationById
 );
 
 // Admin - Approve application
@@ -68,7 +77,7 @@ router.patch(
   "/applications/:id/approve",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.approveApplication.bind(organizerController)
+  approveApplication
 );
 
 // Admin - Reject application
@@ -76,7 +85,7 @@ router.patch(
   "/applications/:id/reject",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.rejectApplication.bind(organizerController)
+  rejectApplication
 );
 
 // Admin - Get all organizers
@@ -84,7 +93,7 @@ router.get(
   "/",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.getAllOrganizers.bind(organizerController)
+  getAllOrganizers
 );
 
 // Admin - Revoke organizer privileges
@@ -92,7 +101,7 @@ router.patch(
   "/:id/revoke",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.revokeOrganizer.bind(organizerController)
+  revokeOrganizer
 );
 
 // Admin - Reinstate organizer privileges
@@ -100,7 +109,7 @@ router.patch(
   "/:id/reinstate",
   authenticate,
   authorize(Role.ADMIN),
-  organizerController.reinstateOrganizer.bind(organizerController)
+  reinstateOrganizer
 );
 
 export default router;

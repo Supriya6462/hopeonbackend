@@ -1,264 +1,168 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { organizerService } from "./organizer.service";
+import { asyncHandler } from "../middleware/errorHandler.middleware";
+import { sendResponse } from "../utils/sendResponse";
 
-
-export class OrganizerController {
-    // Donor - Submit organizer application
-    async submitApplication(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const application = await organizerService.submitApplication(
-                req.user._id.toString(),
-                req.body
-            );
-            res.status(201).json({
-                success: true,
-                message: "Application submitted successfully",
-                data: application,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-     // Step 1: Create draft application (Form 1)
-  async createDraftApplication(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ message: "Unauthorized" });
-        return;
-      }
-
-      const result = await organizerService.createDraftApplication(
-        req.user._id.toString(),
+export const submitApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.submitApplication(
+        req.user!._id.toString(),
         req.body
-      );
+    );
+    
+    sendResponse(res, {
+        statusCode: 201,
+        message: "Application submitted successfully",
+        data: { application }
+    });
+});
+export const createDraftApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.createDraftApplication(
+        req.user!._id.toString(),
+        req.body
+    );
 
-      res.status(201).json({
-        success: true,
+    sendResponse(res, {
+        statusCode: 201,
         message: result.isUpdate 
-          ? "Draft application updated" 
-          : "Draft application created. Please upload documents to complete.",
-        data: result.application,
-      });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  }
+            ? "Draft application updated" 
+            : "Draft application created. Please upload documents to complete.",
+        data: { application: result.application }
+    });
+});
 
-  // Step 2: Upload documents and submit (Form 2)
-  async uploadDocumentsAndSubmit(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ message: "Unauthorized" });
-        return;
-      }
-
-      const files = req.files as {
+export const uploadDocumentsAndSubmit = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const files = req.files as {
         governmentId?: Express.Multer.File[];
         selfieWithId?: Express.Multer.File[];
         registrationCertificate?: Express.Multer.File[];
         taxId?: Express.Multer.File[];
         addressProof?: Express.Multer.File[];
         additionalDocuments?: Express.Multer.File[];
-      };
+    };
 
-      const application = await organizerService.uploadDocumentsAndSubmit(
-        req.user._id.toString(),
+    const application = await organizerService.uploadDocumentsAndSubmit(
+        req.user!._id.toString(),
         req.params.applicationId,
         files
-      );
+    );
 
-      res.status(200).json({
-        success: true,
+    sendResponse(res, {
+        statusCode: 200,
         message: "Documents uploaded and application submitted for review",
-        data: application,
-      });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  }
+        data: { application }
+    });
+});
 
-  // Get user's draft application
-  async getDraftApplication(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ message: "Unauthorized" });
-        return;
-      }
+export const getDraftApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.getDraftApplication(
+        req.user!._id.toString()
+    );
 
-      const application = await organizerService.getDraftApplication(
-        req.user._id.toString()
-      );
+    sendResponse(res, {
+        statusCode: 200,
+        data: { application }
+    });
+});
 
-      res.status(200).json({
-        success: true,
-        data: application,
-      });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  }
+export const getUserApplications = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const applications = await organizerService.getUserApplications(
+        req.user!._id.toString()
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        data: { applications }
+    });
+});
 
-    // Get user's applications
-    async getUserApplications(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
+export const getAllApplications = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.getAllApplications(req.query);
+    
+    sendResponse(res, {
+        statusCode: 200,
+        data: result
+    });
+});
 
-            const applications = await organizerService.getUserApplications(
-                req.user._id.toString()
-            );
-            res.status(200).json({
-                success: true,
-                data: applications,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
+export const getApplicationById = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.getApplicationById(
+        req.params.id
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        data: { application }
+    });
+});
+
+export const approveApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.approveApplication(
+        req.params.id,
+        req.user!._id.toString()
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        message: "Application approved. User is now an organizer.",
+        data: { application }
+    });
+});
+
+export const rejectApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { rejectionReason } = req.body;
+    const application = await organizerService.rejectApplication(
+        req.params.id,
+        req.user!._id.toString(),
+        rejectionReason
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        message: "Application rejected",
+        data: { application }
+    });
+});
+
+export const revokeOrganizer = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { revocationReason } = req.body;
+    const result = await organizerService.revokeOrganizer(
+        req.params.id,
+        req.user!._id.toString(),
+        revocationReason
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        message: result.message,
+        data: {
+            user: result.user,
+            actionsPerformed: result.actionsPerformed
         }
-    }
+    });
+});
 
-    // Admin - Get all applications
-    async getAllApplications(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            const applications = await organizerService.getAllApplications(req.query);
-            res.status(200).json({
-                success: true,
-                data: applications,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
+export const reinstateOrganizer = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.reinstateOrganizer(
+        req.params.id,
+        req.user!._id.toString()
+    );
+    
+    sendResponse(res, {
+        statusCode: 200,
+        message: result.message,
+        data: {
+            user: result.user,
+            note: result.note
         }
-    }
+    });
+});
 
-    // Admin - Get single application
-    async getApplicationById(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            const application = await organizerService.getApplicationById(
-                req.params.id
-            );
-            res.status(200).json({ success: true, data: application });
-        } catch (error: any) {
-            res.status(404).json({ success: false, message: error.message });
-        }
-    }
-
-    // Admin - Approve application
-    async approveApplication(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const application = await organizerService.approveApplication(
-                req.params.id,
-                req.user._id.toString()
-            );
-            res.status(200).json({
-                success: true,
-                message: "Application approved. User is now an organizer.",
-                data: application,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-
-    // Admin - Reject application
-    async rejectApplication(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const { rejectionReason } = req.body;
-            const application = await organizerService.rejectApplication(
-                req.params.id,
-                req.user._id.toString(),
-                rejectionReason
-            );
-            res.status(200).json({
-                success: true,
-                message: "Application rejected",
-                data: application,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-
-    // Admin - Revoke organizer privileges
-    async revokeOrganizer(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const { revocationReason } = req.body;
-            if (!revocationReason) {
-                res.status(400).json({ 
-                    success: false, 
-                    message: "Revocation reason is required" 
-                });
-                return;
-            }
-
-            const result = await organizerService.revokeOrganizer(
-                req.params.id,
-                req.user._id.toString(),
-                revocationReason
-            );
-            res.status(200).json({
-                success: true,
-                ...result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-
-    // Admin - Reinstate organizer privileges
-    async reinstateOrganizer(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const result = await organizerService.reinstateOrganizer(
-                req.params.id,
-                req.user._id.toString()
-            );
-            res.status(200).json({
-                success: true,
-                ...result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-
-    // Admin - Get all organizers
-    async getAllOrganizers(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            const result = await organizerService.getAllOrganizers(req.query);
-            res.status(200).json({
-                success: true,
-                data: result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ success: false, message: error.message });
-        }
-    }
-}
-
-export const organizerController = new OrganizerController();
+export const getAllOrganizers = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.getAllOrganizers(req.query);
+    
+    sendResponse(res, {
+        statusCode: 200,
+        data: result
+    });
+});

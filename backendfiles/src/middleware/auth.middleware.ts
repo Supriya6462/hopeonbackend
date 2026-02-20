@@ -21,7 +21,7 @@ export const authenticate = async (
     throw new ApiError("Authentication required", 401, "AUTH_REQUIRED");
     }
 
-    const decoded = verifyAccessToken(token);
+    const decoded = verifyAccessToken(token) as { userId: string};
     const user = await User.findById(decoded.userId).select("-passwordHash");
 
     if (!user) {

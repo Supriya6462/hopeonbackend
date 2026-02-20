@@ -6,6 +6,7 @@ import { hashPassword, comparePassword } from "../utils/password.util.js";
 import { generateToken } from "../utils/jwt.util.js";
 import { emailService } from "../utils/email.util.js";
 import { ApiError } from "../utils/ApiError.js";
+import { APIFeatures, QueryString } from "../utils/apiFeatures.js";
 
 interface RegisterInput {
   name: string;
@@ -121,6 +122,15 @@ export class AuthService {
         isEmailVerified: user.isEmailVerified,
       },
       token,
+    };
+  }
+
+  async getalluser(queryString: QueryString) {
+    const features = new APIFeatures(User, queryString).filter().search(["name, email"]).sort().limitFields().paginate();
+    const {results, pagination}= await features.exec();
+    return {
+      users: results,
+      pagination
     };
   }
 
