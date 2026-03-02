@@ -1,12 +1,12 @@
 import { Donation } from "../models/Donation.model.js";
 import { Campaign } from "../models/Campaign.model.js";
-import { DonationStatus, DonationMethod } from "../types/enums.js";
+import { DonationStatus, PaymentProvider } from "../types/enums.js";
 import mongoose from "mongoose";
 
 interface CreateDonationDTO {
   campaign: string;
   amount: number;
-  method: DonationMethod;
+  method: PaymentProvider;
   donorEmail: string;
   transactionId?: string;
   payerEmail?: string;
@@ -17,18 +17,18 @@ interface CreateDonationDTO {
   network?: string;
 }
 
-interface UpdateDonationPaymentDetails {
-  transactionId?: string;
-  payerEmail?: string;
-  payerName?: string;
-  payerCountry?: string;
-  captureDetails?: any;
-  transactionHash?: string;
-}
+// interface UpdateDonationPaymentDetails {
+//   transactionId?: string;
+//   payerEmail?: string;
+//   payerName?: string;
+//   payerCountry?: string;
+//   captureDetails?: any;
+//   transactionHash?: string;
+// }
 
 interface DonationFilters {
   status?: DonationStatus;
-  method?: DonationMethod;
+  method?: PaymentProvider;
   campaign?: string;
   page?: number;
   limit?: number;
@@ -102,22 +102,86 @@ export class DonationService {
   }
 
   // Update donation status (after payment confirmation)
+  // async updateDonationStatus(
+  //   donationId: string,
+  //   status: DonationStatus,
+  //   paymentDetails?: UpdateDonationPaymentDetails
+  // ) {
+  //   // Validate ObjectId
+  //   if (!mongoose.Types.ObjectId.isValid(donationId)) {
+  //     throw new Error("Invalid donation ID");
+  //   }
+
+  //   // Validate status
+  //   if (!Object.values(DonationStatus).includes(status)) {
+  //     throw new Error("Invalid donation status");
+  //   }
+
+  //   const donation = await Donation.findById(donationId);
+
+  //   if (!donation) {
+  //     throw new Error("Donation not found");
+  //   }
+
+  //   const previousStatus = donation.status;
+
+  //   // Use transaction for data consistency
+  //   const session = await mongoose.startSession();
+  //   session.startTransaction();
+
+  //   try {
+  //     // Update donation status
+  //     donation.status = status;
+
+  //     // Add payment details if provided
+  //     if (paymentDetails) {
+  //       if (paymentDetails.transactionId) donation.transactionId = paymentDetails.transactionId;
+  //       if (paymentDetails.payerEmail) donation.payerEmail = paymentDetails.payerEmail;
+  //       if (paymentDetails.payerName) donation.payerName = paymentDetails.payerName;
+  //       if (paymentDetails.payerCountry) donation.payerCountry = paymentDetails.payerCountry;
+  //       if (paymentDetails.captureDetails) donation.captureDetails = paymentDetails.captureDetails;
+  //       if (paymentDetails.transactionHash) donation.transactionHash = paymentDetails.transactionHash;
+  //     }
+
+  //     await donation.save({ session });
+
+  //     // If completed for the first time, update campaign raised amount
+  //     if (status === DonationStatus.COMPLETED && previousStatus !== DonationStatus.COMPLETED) {
+  //       await Campaign.findByIdAndUpdate(
+  //         donation.campaign,
+  //         { $inc: { raised: donation.amount } },
+  //         { session }
+  //       );
+  //     }
+
+  //     // If failed after being completed, deduct from campaign
+  //     if (status === DonationStatus.FAILED && previousStatus === DonationStatus.COMPLETED) {
+  //       const campaign = await Campaign.findById(donation.campaign);
+  //       if (campaign) {
+  //         campaign.raised = Math.max(0, campaign.raised - donation.amount);
+  //         await campaign.save({ session });
+  //       }
+  //     }
+
+  //     await session.commitTransaction();
+  //     return donation;
+  //   } catch (error) {
+  //     await session.abortTransaction();
+  //     throw error;
+  //   } finally {
+  //     session.endSession();
+  //   }
+  // }
+
   async updateDonationStatus(
-    donationId: string,
-    status: DonationStatus,
-    paymentDetails?: UpdateDonationPaymentDetails
-  ) {
-    // Validate ObjectId
-    if (!mongoose.Types.ObjectId.isValid(donationId)) {
-      throw new Error("Invalid donation ID");
-    }
+  donationId: string,
+  status: DonationStatus
+) {
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-    // Validate status
-    if (!Object.values(DonationStatus).includes(status)) {
-      throw new Error("Invalid donation status");
-    }
-
-    const donation = await Donation.findById(donationId);
+  try {
+    const donation = await Donation.findById(donationId).session(session);
 
     if (!donation) {
       throw new Error("Donation not found");
@@ -125,53 +189,56 @@ export class DonationService {
 
     const previousStatus = donation.status;
 
-    // Use transaction for data consistency
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      // Update donation status
-      donation.status = status;
-
-      // Add payment details if provided
-      if (paymentDetails) {
-        if (paymentDetails.transactionId) donation.transactionId = paymentDetails.transactionId;
-        if (paymentDetails.payerEmail) donation.payerEmail = paymentDetails.payerEmail;
-        if (paymentDetails.payerName) donation.payerName = paymentDetails.payerName;
-        if (paymentDetails.payerCountry) donation.payerCountry = paymentDetails.payerCountry;
-        if (paymentDetails.captureDetails) donation.captureDetails = paymentDetails.captureDetails;
-        if (paymentDetails.transactionHash) donation.transactionHash = paymentDetails.transactionHash;
-      }
-
-      await donation.save({ session });
-
-      // If completed for the first time, update campaign raised amount
-      if (status === DonationStatus.COMPLETED && previousStatus !== DonationStatus.COMPLETED) {
-        await Campaign.findByIdAndUpdate(
-          donation.campaign,
-          { $inc: { raised: donation.amount } },
-          { session }
-        );
-      }
-
-      // If failed after being completed, deduct from campaign
-      if (status === DonationStatus.FAILED && previousStatus === DonationStatus.COMPLETED) {
-        const campaign = await Campaign.findById(donation.campaign);
-        if (campaign) {
-          campaign.raised = Math.max(0, campaign.raised - donation.amount);
-          await campaign.save({ session });
-        }
-      }
-
+    // Prevent unnecessary updates
+    if (previousStatus === status) {
       await session.commitTransaction();
-      return donation;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
       session.endSession();
+      return donation;
     }
+
+    donation.status = status;
+
+    /**
+     * If donation becomes COMPLETED for the first time,
+     * calculate platform fee and net amount.
+     */
+    if (
+      status === DonationStatus.COMPLETED &&
+      previousStatus !== DonationStatus.COMPLETED
+    ) {
+      const platformFeePercentage = 0.05; // 5%
+      const platformFee = donation.amount * platformFeePercentage;
+      const netAmount = donation.amount - platformFee;
+
+      donation.platformFee = platformFee;
+      donation.netAmount = netAmount;
+    }
+
+    /**
+     * If donation was completed and is now FAILED,
+     * reset financial fields.
+     */
+    if (
+      status === DonationStatus.FAILED &&
+      previousStatus === DonationStatus.COMPLETED
+    ) {
+      donation.platformFee = 0;
+      donation.netAmount = 0;
+    }
+
+    await donation.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return donation;
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
+}
 
   // Get donations by campaign
   async getDonationsByCampaign(campaignId: string, filters: CampaignDonationFilters = {}) {
@@ -231,7 +298,7 @@ export class DonationService {
     }
 
     // Filter by method
-    if (filters.method && Object.values(DonationMethod).includes(filters.method)) {
+    if (filters.method && Object.values(PaymentProvider).includes(filters.method)) {
       query.method = filters.method;
     }
 

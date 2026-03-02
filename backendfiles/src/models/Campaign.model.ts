@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { FundingType } from "../types/enums";
 
 export interface ICampaign extends Document {
   _id: mongoose.Types.ObjectId;
@@ -6,7 +7,7 @@ export interface ICampaign extends Document {
   description?: string;
   images: string[];
   target: number;
-  raised: number;
+  fundingType: FundingType;
   owner: mongoose.Types.ObjectId;
   isApproved: boolean;
   isClosed: boolean;
@@ -21,7 +22,7 @@ const CampaignSchema = new Schema<ICampaign>(
     description: { type: String, trim: true, maxLength: 2000 },
     images: [{ type: String }],
     target: { type: Number, required: true, min: 0 },
-    raised: { type: Number, default: 0, min: 0 },
+    fundingType: { type: String, enum: Object.values(FundingType), default: FundingType.FLEXIBLE },
     owner: { type: Schema.Types.ObjectId, ref: "User", required: true },
     isApproved: { type: Boolean, default: false },
     isClosed: { type: Boolean, default: false },
@@ -31,7 +32,7 @@ const CampaignSchema = new Schema<ICampaign>(
 );
 
 CampaignSchema.index({ owner: 1 });
-CampaignSchema.index({ isApproved: 1 });
+CampaignSchema.index({ isApproved: 1, isClosed: 1 });
 CampaignSchema.index({ title: "text" });
 
 export const Campaign = mongoose.model<ICampaign>("Campaign", CampaignSchema);

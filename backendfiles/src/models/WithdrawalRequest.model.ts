@@ -5,8 +5,12 @@ export interface IWithdrawalRequest extends Document {
   _id: mongoose.Types.ObjectId;
   organizer: mongoose.Types.ObjectId;
   campaign: mongoose.Types.ObjectId;
+
   amountRequested: number;
   payoutMethod: PayoutMethod;
+  availableBalanceSnapshot: number;
+  netAmountPaid: number;
+
   bankDetails?: {
     accountHolderName?: string;
     bankName?: string;
@@ -35,6 +39,8 @@ const WithdrawalRequestSchema = new Schema<IWithdrawalRequest>(
     campaign: { type: Schema.Types.ObjectId, ref: "Campaign", required: true },
     amountRequested: { type: Number, required: true, min: 0.01 },
     payoutMethod: { type: String, enum: Object.values(PayoutMethod), required: true },
+    availableBalanceSnapshot: { type: Number, required: true},
+    netAmountPaid: { type: Number, default: 0},
     bankDetails: {
       accountHolderName: { type: String, default: null },
       bankName: { type: String, default: null },
@@ -48,7 +54,7 @@ const WithdrawalRequestSchema = new Schema<IWithdrawalRequest>(
       network: { type: String, default: null },
     },
     reason: { type: String, default: null },
-    status: { type: String, enum: Object.values(WithdrawalStatus), default: WithdrawalStatus.PENDING },
+    status: { type: String, enum: Object.values(WithdrawalStatus), default: WithdrawalStatus.REQUESTED },
     adminMessage: { type: String, default: null },
     paidAt: { type: Date, default: null },
     paymentReference: { type: String, default: null },

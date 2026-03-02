@@ -22,5 +22,9 @@ declare namespace NodeJS {
     PAYPAL_CLIENT_ID?: string;
     PAYPAL_SECRET?: string;
     PAYPAL_MODE?: "sandbox" | "live";
+
+    KHALTI_PUBLIC_KEY?: string;
+    KHALTI_SECRET_KEY?: string;
+    KHALTI_ENV: string;
   }
 }

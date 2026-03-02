@@ -4,15 +4,22 @@ export enum Role {
   ADMIN = "admin",
 }
 
-export enum DonationMethod {
+export enum PaymentProvider {
   PAYPAL = "paypal",
   CRYPTO = "crypto",
+  ESEWA="esewa",
+  KHALTI="khalti"
 }
 
 export enum DonationStatus {
-  COMPLETED = "COMPLETED",
-  PENDING = "PENDING",
-  FAILED = "FAILED",
+  CREATED = "created",
+  PENDING = "pending",
+  PROCESSING = "processing",
+  COMPLETED = "completed",
+  FAILED = "failed",
+  CANCELLED = "cancelled",
+  REFUNDED = "refunded",
+  EXPIRED = "expired",
 }
 
 export enum CryptoNetwork {
@@ -30,14 +37,17 @@ export enum ApplicationStatus {
 
 export enum OtpPurpose {
   REGISTER = "register",
-  FORGOT_PASSWORD = "forget-password",
+  FORGOT_PASSWORD = "forgot-password",
 }
 
 export enum WithdrawalStatus {
-  PENDING = "pending",
+  REQUESTED = "requested",
+  UNDER_REVIEW = "under_review",
   APPROVED = "approved",
   REJECTED = "rejected",
+  PROCESSING = "processing",
   PAID = "paid",
+  FAILED = "failed",
 }
 
 export enum OrganizationType {
@@ -52,4 +62,11 @@ export enum PayoutMethod {
   BANK = "bank",
   PAYPAL = "paypal",
   CRYPTO = "crypto",
+  ESEWA="esewa",
+  KHALTI="khalti"
+}
+
+export enum FundingType {
+  FLEXIBLE = "flexible",
+  ALL_OR_NOTHING = "all_or_nothing"
 }

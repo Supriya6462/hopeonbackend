@@ -160,6 +160,15 @@ export class OrganizerService {
       throw new ApiError("Government ID and Selfie with ID are required", 400, "MISSING_REQUIRED_DOCUMENTS");
     }
 
+    // Additional validation for specific organization types
+    if (
+      (application.organizationType === OrganizationType.NONPROFIT || 
+       application.organizationType === OrganizationType.CHARITY) &&
+      !files.registrationCertificate?.[0]
+    ) {
+      throw new ApiError("Registration certificate is required for nonprofit/charity organizations", 400, "MISSING_REGISTRATION_CERTIFICATE");
+    }
+
     const uploadFolder = `organizer-documents/${userId}/${applicationId}`;
     const documents: any = {};
 
@@ -205,6 +214,7 @@ export class OrganizerService {
     // Update application with documents and change status to PENDING
     application.documents = documents;
     application.status = ApplicationStatus.PENDING;
+    application.documentsVerified = false; // Admin needs to verify
     await application.save();
 
     return application;
@@ -289,7 +299,7 @@ export class OrganizerService {
   }
 
   // Approve application (admin only)
-  async approveApplication(applicationId: string, adminId: string) {
+  async approveApplication(applicationId: string, adminId: string, adminNotes?: string) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
       throw new ApiError("Invalid application ID", 400, "INVALID_APPLICATION_ID");
@@ -317,6 +327,10 @@ export class OrganizerService {
       application.status = ApplicationStatus.APPROVED;
       application.reviewedBy = new mongoose.Types.ObjectId(adminId);
       application.reviewedAt = new Date();
+      application.documentsVerified = true;
+      if (adminNotes) {
+        application.adminNotes = adminNotes.trim();
+      }
       await application.save({ session });
 
       // Update user role and approval status
@@ -343,7 +357,8 @@ export class OrganizerService {
   async rejectApplication(
     applicationId: string,
     adminId: string,
-    rejectionReason?: string
+    rejectionReason?: string,
+    adminNotes?: string
   ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
@@ -367,6 +382,9 @@ export class OrganizerService {
     application.reviewedBy = new mongoose.Types.ObjectId(adminId);
     application.reviewedAt = new Date();
     application.rejectionReason = rejectionReason?.trim() || "Application rejected by admin";
+    if (adminNotes) {
+      application.adminNotes = adminNotes.trim();
+    }
     await application.save();
 
     return application;
@@ -425,7 +443,7 @@ export class OrganizerService {
 
       // Reject all pending withdrawal requests
       await WithdrawalRequest.updateMany(
-        { organizer: organizerId, status: WithdrawalStatus.PENDING },
+        { organizer: organizerId, status: WithdrawalStatus.REQUESTED },
         {
           status: WithdrawalStatus.REJECTED,
           adminMessage: "Organizer account has been revoked",

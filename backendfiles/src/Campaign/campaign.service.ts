@@ -1,6 +1,9 @@
 import { Campaign, ICampaign } from "../models/Campaign.model.js";
+import { Donation } from "../models/Donation.model.js";
 import { User } from "../models/User.model.js";
-import { Role } from "../types/enums.js";
+import { DonationStatus, FundingType, Role } from "../types/enums.js";
+import { ApiError } from "../utils/ApiError.js";
+import { APIFeatures, QueryString } from "../utils/apiFeatures.js";
 import mongoose from "mongoose";
 
 interface CreateCampaignDTO {
@@ -8,6 +11,7 @@ interface CreateCampaignDTO {
   description?: string;
   images?: string[];
   target: number;
+  fundingType: FundingType;
 }
 
 interface UpdateCampaignDTO {
@@ -17,14 +21,7 @@ interface UpdateCampaignDTO {
   target?: number;
 }
 
-interface CampaignFilters {
-  owner?: string;
-  isApproved?: boolean;
-  isClosed?: boolean;
-  search?: string;
-  page?: number;
-  limit?: number;
-}
+
 
 export class CampaignService {
   // Helper: Verify campaign ownership
@@ -36,11 +33,11 @@ export class CampaignService {
     const campaign = await Campaign.findById(campaignId);
 
     if (!campaign) {
-      throw new Error("Campaign not found");
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
     if (userRole !== Role.ADMIN && campaign.owner.toString() !== userId) {
-      throw new Error("You don't have permission to perform this action");
+      throw new ApiError("You don't have permission to perform this action", 403, "CAMPAIGN_FORBIDDEN");
     }
 
     return campaign;
@@ -50,17 +47,17 @@ export class CampaignService {
   async createCampaign(organizerId: string, campaignData: CreateCampaignDTO) {
     // Validate input
     if (!campaignData.title || !campaignData.target) {
-      throw new Error("Title and target amount are required");
+      throw new ApiError("Title and target amount are required", 400, "CAMPAIGN_INVALID_INPUT");
     }
 
     if (campaignData.target <= 0) {
-      throw new Error("Target amount must be greater than 0");
+      throw new ApiError("Target amount must be greater than 0", 400, "CAMPAIGN_INVALID_TARGET");
     }
 
     // Verify user is an approved organizer
     const user = await User.findById(organizerId);
     if (!user || user.role !== Role.ORGANIZER || !user.isOrganizerApproved) {
-      throw new Error("Only approved organizers can create campaigns");
+      throw new ApiError("Only approved organizers can create campaigns", 403, "CAMPAIGN_ORGANIZER_NOT_APPROVED");
     }
 
     const campaign = await Campaign.create({
@@ -68,9 +65,9 @@ export class CampaignService {
       description: campaignData.description,
       images: campaignData.images || [],
       target: campaignData.target,
+      fundingType: campaignData.fundingType,
       owner: organizerId,
       isApproved: false,
-      raised: 0,
       isClosed: false,
     });
 
@@ -78,60 +75,49 @@ export class CampaignService {
   }
 
   // Get all campaigns (with filters and pagination)
-  async getCampaigns(filters: CampaignFilters = {}, userId?: string, userRole?: string) {
-    const query: any = {};
+  async getCampaigns(queryString: QueryString, userId?: string, userRole?: string) {
+    // Build filter object for non-admin users
+    const additionalFilters: any = {};
 
     // Non-admins can only see approved campaigns (unless viewing their own)
     if (userRole !== Role.ADMIN) {
-      if (filters.owner && filters.owner === userId) {
+      const owner = queryString.owner as string;
+      if (owner && owner === userId) {
         // Organizer viewing their own campaigns
-        query.owner = new mongoose.Types.ObjectId(userId);
-      } else {
+      additionalFilters.owner = new mongoose.Types.ObjectId(userId);
+    } else {
         // Public view - only approved campaigns
-        query.isApproved = true;
+      additionalFilters.isApproved = true;
       }
     }
 
     // Apply additional filters (admin only for isApproved)
-    if (filters.isApproved !== undefined && userRole === Role.ADMIN) {
-      query.isApproved = filters.isApproved;
+    if (queryString.isApproved !== undefined && userRole === Role.ADMIN) {
+      additionalFilters.isApproved = queryString.isApproved === 'true';
     }
 
-    if (filters.isClosed !== undefined) {
-      query.isClosed = filters.isClosed;
+    if (queryString.isClosed !== undefined) {
+      additionalFilters.isClosed = queryString.isClosed === 'true';
     }
 
-    // Text search (sanitized)
-    if (filters.search && typeof filters.search === "string") {
-      const searchTerm = filters.search.trim();
-      if (searchTerm) {
-        query.$text = { $search: searchTerm };
-      }
-    }
+    // Merge additional filters into queryString
+    const mergedQueryString = { ...queryString, ...additionalFilters };
 
-    // Pagination
-    const page = Math.max(1, Number(filters.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(filters.limit) || 10));
-    const skip = (page - 1) * limit;
+    const features = new APIFeatures(Campaign, mergedQueryString)
+      .filter()
+      .search(["title", "description"])
+      .sort()
+      .limitFields()
+      .paginate();
 
-    const [campaigns, total] = await Promise.all([
-      Campaign.find(query)
-        .populate("owner", "name email image")
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      Campaign.countDocuments(query),
-    ]);
+    const { results, pagination } = await features.exec();
+
+    // Populate owner after query execution
+    await Campaign.populate(results, { path: 'owner', select: 'name email image' });
 
     return {
-      campaigns,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      campaigns: results,
+      pagination
     };
   }
 
@@ -139,7 +125,7 @@ export class CampaignService {
   async getCampaignById(campaignId: string, userId?: string, userRole?: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "CAMPAIGN_INVALID_ID");
     }
 
     const campaign = await Campaign.findById(campaignId)
@@ -147,14 +133,14 @@ export class CampaignService {
       .lean();
 
     if (!campaign) {
-      throw new Error("Campaign not found");
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
     // Check access permissions
     if (!campaign.isApproved && userRole !== Role.ADMIN) {
       // Only owner or admin can view unapproved campaigns
       if (!userId || campaign.owner._id.toString() !== userId) {
-        throw new Error("Campaign not found");
+        throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
       }
     }
 
@@ -170,7 +156,7 @@ export class CampaignService {
   ) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "CAMPAIGN_INVALID_ID");
     }
 
     const campaign = await this.verifyCampaignOwnership(campaignId, userId, userRole);
@@ -180,7 +166,7 @@ export class CampaignService {
 
     if (updates.title !== undefined) {
       if (typeof updates.title !== "string" || updates.title.trim().length === 0) {
-        throw new Error("Title must be a non-empty string");
+        throw new ApiError("Title must be a non-empty string", 400, "CAMPAIGN_INVALID_TITLE");
       }
       allowedUpdates.title = updates.title.trim();
     }
@@ -191,7 +177,7 @@ export class CampaignService {
 
     if (updates.images !== undefined) {
       if (!Array.isArray(updates.images)) {
-        throw new Error("Images must be an array");
+        throw new ApiError("Images must be an array", 400, "CAMPAIGN_INVALID_IMAGES");
       }
       allowedUpdates.images = updates.images;
     }
@@ -199,7 +185,7 @@ export class CampaignService {
     if (updates.target !== undefined) {
       const target = Number(updates.target);
       if (isNaN(target) || target <= 0) {
-        throw new Error("Target must be a positive number");
+        throw new ApiError("Target must be a positive number", 400, "CAMPAIGN_INVALID_TARGET");
       }
       allowedUpdates.target = target;
     }
@@ -215,7 +201,7 @@ export class CampaignService {
   async approveCampaign(campaignId: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "CAMPAIGN_INVALID_ID");
     }
 
     const campaign = await Campaign.findByIdAndUpdate(
@@ -225,7 +211,7 @@ export class CampaignService {
     ).populate("owner", "name email");
 
     if (!campaign) {
-      throw new Error("Campaign not found");
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
     return campaign;
@@ -235,13 +221,13 @@ export class CampaignService {
   async closeCampaign(campaignId: string, userId: string, userRole: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "CAMPAIGN_INVALID_ID");
     }
 
     const campaign = await this.verifyCampaignOwnership(campaignId, userId, userRole);
 
     if (campaign.isClosed) {
-      throw new Error("Campaign is already closed");
+      throw new ApiError("Campaign is already closed", 400, "CAMPAIGN_ALREADY_CLOSED");
     }
 
     campaign.isClosed = true;
@@ -254,14 +240,19 @@ export class CampaignService {
   async deleteCampaign(campaignId: string, userId: string, userRole: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "CAMPAIGN_INVALID_ID");
     }
 
-    const campaign = await this.verifyCampaignOwnership(campaignId, userId, userRole);
+    await this.verifyCampaignOwnership(campaignId, userId, userRole);
 
     // Prevent deletion if campaign has donations
-    if (campaign.raised > 0) {
-      throw new Error("Cannot delete campaign with existing donations");
+    const hasCompletedDonations = await Donation.exists({
+      campaign: campaignId,
+      status: DonationStatus.COMPLETED
+    });
+
+    if (hasCompletedDonations) {
+      throw new ApiError("Cannot delete campaign with existing donations", 400, "CAMPAIGN_HAS_DONATIONS");
     }
 
     await Campaign.findByIdAndDelete(campaignId);

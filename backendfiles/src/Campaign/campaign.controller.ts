@@ -1,141 +1,127 @@
-import { Response } from "express";
-import { AuthRequest } from "../middleware/auth.middleware";
+import { Request, Response } from "express";
+import { asyncHandler } from "../middleware/errorHandler.middleware";
 import { campaignService } from "./campaign.service";
+import { sendResponse } from "../utils/sendResponse";
 
-export class CampaignController {
+export const createCampaign = asyncHandler(async (req: Request, res: Response) => {
+  const organizerId = req.user?._id;
+  if (!organizerId) {
+    sendResponse(res, {
+      statusCode: 401,
+      message: "Unauthorized"
+    });
+    return;
+  }
 
-    // CREATE CAMPAIGN (Organizer only)
-    async createcampaign(req: AuthRequest, res: Response): Promise<void> {
-        try{
-            const organizerId = req.user?._id;
-            if (!organizerId)
-            {
-                res.status(401).json({message:"unauthorized "});
-                return;
-            }
+  const result = await campaignService.createCampaign(organizerId.toString(), req.body);
+  
+  sendResponse(res, {
+    statusCode: 201,
+    message: "Campaign created successfully. Awaiting admin approval.",
+    data: { result }
+  });
+});
 
-            const result = await campaignService.createCampaign(organizerId.toString(), req.body);
-                  res.status(201).json({
-                    message: "Campaign created successfully. Awaiting admin approval.",
-                    data: result,
-      });
-        } catch(error: any)
-        {
-            res.status(400).json({message: error.message});
-        }
-    }
+export const getCampaigns = asyncHandler(async (req: Request, res: Response) => {
+  const { campaigns, pagination } = await campaignService.getCampaigns(
+    req.query,
+    req.user?._id?.toString(),
+    req.user?.role
+  );
+  
+  sendResponse(res, {
+    statusCode: 200,
+    message: "Campaigns fetched successfully",
+    data: { campaigns },
+    meta: { pagination }
+  });
+});
 
-    // GET ALL CAMPAIGNS (public + admin + organizer)
+export const getCampaignById = asyncHandler(async (req: Request, res: Response) => {
+  const result = await campaignService.getCampaignById(
+    req.params.id,
+    req.user?._id?.toString(),
+    req.user?.role
+  );
+  
+  sendResponse(res, {
+    statusCode: 200,
+    data: { result }
+  });
+});
 
-    async getcampaigns(req: AuthRequest, res: Response): Promise<void>{
+export const updateCampaign = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    sendResponse(res, {
+      statusCode: 401,
+      message: "Unauthorized"
+    });
+    return;
+  }
 
-        try{
-            const result = await campaignService.getCampaigns(
-                req.query,
-                req.user?._id?.toString(),
-                req.user?.role
-            );
-            res.status(200).json(result);
-        } catch(error: any)
-        {
-            res.status(400).json({message: error.message});
-        }
-    }
+  const result = await campaignService.updateCampaign(
+    req.params.id,
+    req.user._id.toString(),
+    req.user.role,
+    req.body
+  );
 
-    
-    // GET SINGLE CAMPAIGN
-    async getcampaignById(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            const result = await campaignService.getCampaignById(
-                req.params.id,
-                req.user?._id?.toString(),
-                req.user?.role
-            );
-            res.status(200).json(result);
-        } catch (error: any) {
-            res.status(404).json({ message: error.message });
-        }
-    }
+  sendResponse(res, {
+    statusCode: 200,
+    message: "Campaign updated successfully",
+    data: { result }
+  });
+});
 
-    // UPDATE CAMPAIGN (Organizer/Admin)
-    async updateCampaign(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
+export const approveCampaign = asyncHandler(async (req: Request, res: Response) => {
+  const result = await campaignService.approveCampaign(req.params.id);
+  
+  sendResponse(res, {
+    statusCode: 200,
+    message: "Campaign approved successfully",
+    data: { result }
+  });
+});
 
-            const result = await campaignService.updateCampaign(
-                req.params.id,
-                req.user._id.toString(),
-                req.user.role,
-                req.body
-            );
+export const closeCampaign = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    sendResponse(res, {
+      statusCode: 401,
+      message: "Unauthorized"
+    });
+    return;
+  }
 
-            res.status(200).json({
-                message: "Campaign updated successfully",
-                data: result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ message: error.message });
-        }
-    }
+  const result = await campaignService.closeCampaign(
+    req.params.id,
+    req.user._id.toString(),
+    req.user.role
+  );
 
-    // APPROVE CAMPAIGN (Admin only)
-    async approveCampaign(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            const result = await campaignService.approveCampaign(req.params.id);
-            res.status(200).json({
-                message: "Campaign approved",
-                data: result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ message: error.message });
-        }
-    }
+  sendResponse(res, {
+    statusCode: 200,
+    message: "Campaign closed successfully",
+    data: { result }
+  });
+});
 
-    // CLOSE CAMPAIGN (Organizer/Admin)
-    async closeCampaign(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
+export const deleteCampaign = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    sendResponse(res, {
+      statusCode: 401,
+      message: "Unauthorized"
+    });
+    return;
+  }
 
-            const result = await campaignService.closeCampaign(
-                req.params.id,
-                req.user._id.toString(),
-                req.user.role
-            );
+  const result = await campaignService.deleteCampaign(
+    req.params.id,
+    req.user._id.toString(),
+    req.user.role
+  );
 
-            res.status(200).json({
-                message: "Campaign closed",
-                data: result,
-            });
-        } catch (error: any) {
-            res.status(400).json({ message: error.message });
-        }
-    }
-
-    // DELETE CAMPAIGN (Organizer/Admin)
-    async deleteCampaign(req: AuthRequest, res: Response): Promise<void> {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: "Unauthorized" });
-                return;
-            }
-
-            const result = await campaignService.deleteCampaign(
-                req.params.id,
-                req.user._id.toString(),
-                req.user.role
-            );
-
-            res.status(200).json(result);
-        } catch (error: any) {
-            res.status(400).json({ message: error.message });
-        }
-    }
-}
-
-export const campaignController = new CampaignController();
+  sendResponse(res, {
+    statusCode: 200,
+    message: result.message
+  });
+});

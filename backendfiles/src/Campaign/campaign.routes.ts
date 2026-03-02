@@ -5,14 +5,21 @@ import {
   requireApprovedOrganizer,
 } from "../middleware/auth.middleware.js";
 import { Role } from "../types/enums.js";
-import { CampaignController } from "./campaign.controller.js";
+import {
+  createCampaign,
+  getCampaigns,
+  getCampaignById,
+  updateCampaign,
+  approveCampaign,
+  closeCampaign,
+  deleteCampaign
+} from "./campaign.controller.js";
 
 const router = Router();
-const campaignController = new CampaignController();
 
 // Public routes - No authentication required
-router.get("/", campaignController.getcampaigns.bind(campaignController));
-router.get("/:id", campaignController.getcampaignById.bind(campaignController));
+router.get("/allcampaignlist", getCampaigns);
+router.get("/:id", getCampaignById);
 
 // Organizer routes - Requires authentication and organizer role
 router.post(
@@ -20,7 +27,7 @@ router.post(
   authenticate,
   authorize(Role.ORGANIZER),
   requireApprovedOrganizer,
-  campaignController.createcampaign.bind(campaignController)
+  createCampaign
 );
 
 // Organizer/Admin routes - Update campaign
@@ -28,7 +35,7 @@ router.put(
   "/:id",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  campaignController.updateCampaign.bind(campaignController)
+  updateCampaign
 );
 
 // Admin only routes
@@ -36,7 +43,7 @@ router.patch(
   "/:id/approve",
   authenticate,
   authorize(Role.ADMIN),
-  campaignController.approveCampaign.bind(campaignController)
+  approveCampaign
 );
 
 // Organizer/Admin routes - Close and delete
@@ -44,14 +51,14 @@ router.patch(
   "/:id/close",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  campaignController.closeCampaign.bind(campaignController)
+  closeCampaign
 );
 
 router.delete(
   "/:id",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  campaignController.deleteCampaign.bind(campaignController)
+  deleteCampaign
 );
 
 export default router;

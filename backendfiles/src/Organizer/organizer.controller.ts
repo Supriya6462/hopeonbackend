@@ -97,9 +97,11 @@ export const getApplicationById = asyncHandler(async (req: AuthRequest, res: Res
 });
 
 export const approveApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { adminNotes } = req.body;
     const application = await organizerService.approveApplication(
         req.params.id,
-        req.user!._id.toString()
+        req.user!._id.toString(),
+        adminNotes
     );
     
     sendResponse(res, {
@@ -110,11 +112,12 @@ export const approveApplication = asyncHandler(async (req: AuthRequest, res: Res
 });
 
 export const rejectApplication = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { rejectionReason } = req.body;
+    const { rejectionReason, adminNotes } = req.body;
     const application = await organizerService.rejectApplication(
         req.params.id,
         req.user!._id.toString(),
-        rejectionReason
+        rejectionReason,
+        adminNotes
     );
     
     sendResponse(res, {
