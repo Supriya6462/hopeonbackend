@@ -4,6 +4,7 @@ import { EsewaProvider } from "./providers/esewa.provider";
 import { KhaltiProvider } from "./providers/khalti.provider";
 import { PayPalProvider } from "./providers/paypal.provider";
 import { CryptoProvider } from "./providers/crypto.provider";
+import { ApiError } from "../utils/ApiError";
 
 export class PaymentFactory {
   static create(provider: PaymentProvider): IPaymentProvider {
@@ -21,7 +22,11 @@ export class PaymentFactory {
         return new CryptoProvider();
 
       default:
-        throw new Error(`Unsupported payment provider: ${provider}`);
+        throw new ApiError(
+          `Unsupported payment provider: ${provider}`,
+          400,
+          "UNSUPPORTED_PAYMENT_PROVIDER",
+        );
     }
   }
 }

@@ -1,6 +1,7 @@
 import { Donation } from "../models/Donation.model.js";
 import { Campaign } from "../models/Campaign.model.js";
 import { DonationStatus, PaymentProvider } from "../types/enums.js";
+import { ApiError } from "../utils/ApiError.js";
 import mongoose from "mongoose";
 
 interface CreateDonationDTO {
@@ -43,42 +44,67 @@ export class DonationService {
   // Create donation
   async createDonation(donorId: string, donationData: CreateDonationDTO) {
     // Validate required fields
-    if (!donationData.campaign || !donationData.amount || !donationData.method || !donationData.donorEmail) {
-      throw new Error("Campaign, amount, method, and donor email are required");
+    if (
+      !donationData.campaign ||
+      !donationData.amount ||
+      !donationData.method ||
+      !donationData.donorEmail
+    ) {
+      throw new ApiError(
+        "Campaign, amount, method, and donor email are required",
+        400,
+        "DONATION_VALIDATION_ERROR",
+      );
     }
 
     // Validate amount
     const amount = Number(donationData.amount);
     if (isNaN(amount) || amount < 0.01) {
-      throw new Error("Amount must be at least 0.01");
+      throw new ApiError(
+        "Amount must be at least 0.01",
+        400,
+        "DONATION_INVALID_AMOUNT",
+      );
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(donationData.donorEmail)) {
-      throw new Error("Invalid email format");
+      throw new ApiError("Invalid email format", 400, "DONATION_INVALID_EMAIL");
     }
 
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(donorId)) {
-      throw new Error("Invalid donor ID");
+      throw new ApiError("Invalid donor ID", 400, "DONATION_INVALID_DONOR_ID");
     }
     if (!mongoose.Types.ObjectId.isValid(donationData.campaign)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError(
+        "Invalid campaign ID",
+        400,
+        "DONATION_INVALID_CAMPAIGN_ID",
+      );
     }
 
     // Verify campaign exists and is approved
     const campaignDoc = await Campaign.findById(donationData.campaign);
     if (!campaignDoc) {
-      throw new Error("Campaign not found");
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
     if (!campaignDoc.isApproved) {
-      throw new Error("Campaign is not approved for donations");
+      throw new ApiError(
+        "Campaign is not approved for donations",
+        400,
+        "CAMPAIGN_NOT_APPROVED",
+      );
     }
 
     if (campaignDoc.isClosed) {
-      throw new Error("Campaign is closed and no longer accepting donations");
+      throw new ApiError(
+        "Campaign is closed and no longer accepting donations",
+        400,
+        "CAMPAIGN_CLOSED",
+      );
     }
 
     // Create donation
@@ -173,78 +199,77 @@ export class DonationService {
   //   }
   // }
 
-  async updateDonationStatus(
-  donationId: string,
-  status: DonationStatus
-) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  async updateDonationStatus(donationId: string, status: DonationStatus) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-  try {
-    const donation = await Donation.findById(donationId).session(session);
+    try {
+      const donation = await Donation.findById(donationId).session(session);
 
-    if (!donation) {
-      throw new Error("Donation not found");
-    }
+      if (!donation) {
+        throw new ApiError("Donation not found", 404, "DONATION_NOT_FOUND");
+      }
 
-    const previousStatus = donation.status;
+      const previousStatus = donation.status;
 
-    // Prevent unnecessary updates
-    if (previousStatus === status) {
+      // Prevent unnecessary updates
+      if (previousStatus === status) {
+        await session.commitTransaction();
+        session.endSession();
+        return donation;
+      }
+
+      donation.status = status;
+
+      /**
+       * If donation becomes COMPLETED for the first time,
+       * calculate platform fee and net amount.
+       */
+      if (
+        status === DonationStatus.COMPLETED &&
+        previousStatus !== DonationStatus.COMPLETED
+      ) {
+        const platformFeePercentage = 0.05; // 5%
+        const platformFee = donation.amount * platformFeePercentage;
+        const netAmount = donation.amount - platformFee;
+
+        donation.platformFee = platformFee;
+        donation.netAmount = netAmount;
+      }
+
+      /**
+       * If donation was completed and is now FAILED,
+       * reset financial fields.
+       */
+      if (
+        status === DonationStatus.FAILED &&
+        previousStatus === DonationStatus.COMPLETED
+      ) {
+        donation.platformFee = 0;
+        donation.netAmount = 0;
+      }
+
+      await donation.save({ session });
+
       await session.commitTransaction();
       session.endSession();
+
       return donation;
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
     }
-
-    donation.status = status;
-
-    /**
-     * If donation becomes COMPLETED for the first time,
-     * calculate platform fee and net amount.
-     */
-    if (
-      status === DonationStatus.COMPLETED &&
-      previousStatus !== DonationStatus.COMPLETED
-    ) {
-      const platformFeePercentage = 0.05; // 5%
-      const platformFee = donation.amount * platformFeePercentage;
-      const netAmount = donation.amount - platformFee;
-
-      donation.platformFee = platformFee;
-      donation.netAmount = netAmount;
-    }
-
-    /**
-     * If donation was completed and is now FAILED,
-     * reset financial fields.
-     */
-    if (
-      status === DonationStatus.FAILED &&
-      previousStatus === DonationStatus.COMPLETED
-    ) {
-      donation.platformFee = 0;
-      donation.netAmount = 0;
-    }
-
-    await donation.save({ session });
-
-    await session.commitTransaction();
-    session.endSession();
-
-    return donation;
-
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    throw error;
   }
-}
 
   // Get donations by campaign
-  async getDonationsByCampaign(campaignId: string, filters: CampaignDonationFilters = {}) {
+  async getDonationsByCampaign(
+    campaignId: string,
+    filters: CampaignDonationFilters = {},
+  ) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "INVALID_CAMPAIGN_ID");
     }
 
     // Pagination
@@ -279,7 +304,7 @@ export class DonationService {
   async getDonationsByDonor(donorId: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(donorId)) {
-      throw new Error("Invalid donor ID");
+      throw new ApiError("Invalid donor ID", 400, "INVALID_DONOR_ID");
     }
 
     return Donation.find({ donor: donorId })
@@ -293,12 +318,18 @@ export class DonationService {
     const query: any = {};
 
     // Filter by status
-    if (filters.status && Object.values(DonationStatus).includes(filters.status)) {
+    if (
+      filters.status &&
+      Object.values(DonationStatus).includes(filters.status)
+    ) {
       query.status = filters.status;
     }
 
     // Filter by method
-    if (filters.method && Object.values(PaymentProvider).includes(filters.method)) {
+    if (
+      filters.method &&
+      Object.values(PaymentProvider).includes(filters.method)
+    ) {
       query.method = filters.method;
     }
 
@@ -341,7 +372,7 @@ export class DonationService {
     // Validate campaignId if provided
     if (campaignId) {
       if (!mongoose.Types.ObjectId.isValid(campaignId)) {
-        throw new Error("Invalid campaign ID");
+        throw new ApiError("Invalid campaign ID", 400, "INVALID_CAMPAIGN_ID");
       }
       match.campaign = new mongoose.Types.ObjectId(campaignId);
     }

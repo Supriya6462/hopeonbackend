@@ -1,6 +1,7 @@
 import { WithdrawalRequest } from "../models/WithdrawalRequest.model.js";
 import { Campaign } from "../models/Campaign.model.js";
 import { WithdrawalStatus, Role, DonationStatus } from "../types/enums.js";
+import { ApiError } from "../utils/ApiError.js";
 import mongoose from "mongoose";
 import { Donation } from "../models/Donation.model.js";
 
@@ -30,59 +31,140 @@ interface WithdrawalFilters {
 }
 
 export class WithdrawalService {
-
-  private async getCampaignAvailableBalance(campaignId: string) {
-  const result = await Donation.aggregate([
-    {
-      $match: {
-        campaign: new mongoose.Types.ObjectId(campaignId),
-        status: DonationStatus.COMPLETED,
+  // Get total donations (net amount) for a campaign
+  private async getCampaignTotalDonations(campaignId: string): Promise<number> {
+    const result = await Donation.aggregate([
+      {
+        $match: {
+          campaign: new mongoose.Types.ObjectId(campaignId),
+          status: DonationStatus.COMPLETED,
+        },
       },
-    },
-    {
-      $group: {
-        _id: null,
-        total: { $sum: "$netAmount" },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$netAmount" },
+        },
       },
-    },
-  ]);
+    ]);
 
-  return result[0]?.total || 0;
-}
+    return result[0]?.total || 0;
+  }
+
+  // Get total amount already withdrawn (PAID status only)
+  private async getCampaignTotalWithdrawn(campaignId: string): Promise<number> {
+    const result = await WithdrawalRequest.aggregate([
+      {
+        $match: {
+          campaign: new mongoose.Types.ObjectId(campaignId),
+          status: WithdrawalStatus.PAID,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amountRequested" },
+        },
+      },
+    ]);
+
+    return result[0]?.total || 0;
+  }
+
+  // Get total pending/reserved amount (REQUESTED or APPROVED but not yet PAID)
+  private async getCampaignPendingWithdrawals(
+    campaignId: string,
+  ): Promise<number> {
+    const result = await WithdrawalRequest.aggregate([
+      {
+        $match: {
+          campaign: new mongoose.Types.ObjectId(campaignId),
+          status: {
+            $in: [WithdrawalStatus.REQUESTED, WithdrawalStatus.APPROVED],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amountRequested" },
+        },
+      },
+    ]);
+
+    return result[0]?.total || 0;
+  }
+
+  // Get available balance (donations minus paid withdrawals minus pending withdrawals)
+  private async getCampaignAvailableBalance(
+    campaignId: string,
+  ): Promise<number> {
+    const [totalDonations, totalWithdrawn, pendingWithdrawals] =
+      await Promise.all([
+        this.getCampaignTotalDonations(campaignId),
+        this.getCampaignTotalWithdrawn(campaignId),
+        this.getCampaignPendingWithdrawals(campaignId),
+      ]);
+
+    return Math.max(0, totalDonations - totalWithdrawn - pendingWithdrawals);
+  }
 
   // Create withdrawal request (organizer only)
-  async createWithdrawalRequest(organizerId: string, withdrawalData: CreateWithdrawalDTO) {
+  async createWithdrawalRequest(
+    organizerId: string,
+    withdrawalData: CreateWithdrawalDTO,
+  ) {
     // Validate required fields
-    if (!withdrawalData.campaign || !withdrawalData.amountRequested || !withdrawalData.payoutMethod) {
-      throw new Error("Campaign, amount requested, and payout method are required");
+    if (
+      !withdrawalData.campaign ||
+      !withdrawalData.amountRequested ||
+      !withdrawalData.payoutMethod
+    ) {
+      throw new ApiError(
+        "Campaign, amount requested, and payout method are required",
+        400,
+        "WITHDRAWAL_VALIDATION_ERROR",
+      );
     }
 
     // Validate amount
     const amountRequested = Number(withdrawalData.amountRequested);
     if (isNaN(amountRequested) || amountRequested <= 0) {
-      throw new Error("Amount requested must be a positive number");
+      throw new ApiError(
+        "Amount requested must be a positive number",
+        400,
+        "WITHDRAWAL_INVALID_AMOUNT",
+      );
     }
 
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(organizerId)) {
-      throw new Error("Invalid organizer ID");
+      throw new ApiError("Invalid organizer ID", 400, "INVALID_ORGANIZER_ID");
     }
     if (!mongoose.Types.ObjectId.isValid(withdrawalData.campaign)) {
-      throw new Error("Invalid campaign ID");
+      throw new ApiError("Invalid campaign ID", 400, "INVALID_CAMPAIGN_ID");
     }
 
     // Verify campaign ownership
     const campaignDoc = await Campaign.findById(withdrawalData.campaign);
     if (!campaignDoc) {
-      throw new Error("Campaign not found");
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
     if (campaignDoc.owner.toString() !== organizerId) {
-      throw new Error("You don't own this campaign");
+      throw new ApiError(
+        "You don't own this campaign",
+        403,
+        "CAMPAIGN_ACCESS_DENIED",
+      );
     }
 
     if (!campaignDoc.isApproved) {
-      throw new Error("Campaign must be approved before requesting withdrawal");
+      throw new ApiError(
+        "Campaign must be approved before requesting withdrawal",
+        400,
+        "CAMPAIGN_NOT_APPROVED",
+      );
     }
 
     // Check if amount is available
@@ -91,12 +173,16 @@ export class WithdrawalService {
     //     `Requested amount (${amountRequested}) exceeds available funds (${campaignDoc.raised})`
     //   );
     // }
-    const availableBalance = await this.getCampaignAvailableBalance(withdrawalData.campaign);
+    const availableBalance = await this.getCampaignAvailableBalance(
+      withdrawalData.campaign,
+    );
 
-    if(amountRequested > availableBalance){
-        throw new Error(
-    `Requested amount exceeds available balance (${availableBalance})`
-  );
+    if (amountRequested > availableBalance) {
+      throw new ApiError(
+        `Requested amount exceeds available balance (${availableBalance})`,
+        400,
+        "WITHDRAWAL_INSUFFICIENT_FUNDS",
+      );
     }
 
     // Check for pending or approved withdrawal requests
@@ -106,8 +192,10 @@ export class WithdrawalService {
     });
 
     if (existingRequest) {
-      throw new Error(
-        "You already have a pending or approved withdrawal request for this campaign"
+      throw new ApiError(
+        "You already have a pending or approved withdrawal request for this campaign",
+        400,
+        "WITHDRAWAL_REQUEST_EXISTS",
       );
     }
 
@@ -115,6 +203,7 @@ export class WithdrawalService {
       organizer: organizerId,
       campaign: withdrawalData.campaign,
       amountRequested,
+      availableBalanceSnapshot: availableBalance, // Record the available balance at time of request
       payoutMethod: withdrawalData.payoutMethod,
       bankDetails: withdrawalData.bankDetails,
       paypalEmail: withdrawalData.paypalEmail,
@@ -130,7 +219,7 @@ export class WithdrawalService {
   async getOrganizerWithdrawals(organizerId: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(organizerId)) {
-      throw new Error("Invalid organizer ID");
+      throw new ApiError("Invalid organizer ID", 400, "INVALID_ORGANIZER_ID");
     }
 
     return WithdrawalRequest.find({ organizer: organizerId })
@@ -144,7 +233,10 @@ export class WithdrawalService {
     const query: any = {};
 
     // Filter by status
-    if (filters.status && Object.values(WithdrawalStatus).includes(filters.status)) {
+    if (
+      filters.status &&
+      Object.values(WithdrawalStatus).includes(filters.status)
+    ) {
       query.status = filters.status;
     }
 
@@ -177,13 +269,17 @@ export class WithdrawalService {
   }
 
   // Get single withdrawal request
-  async getWithdrawalById(withdrawalId: string, userId: string, userRole: string) {
+  async getWithdrawalById(
+    withdrawalId: string,
+    userId: string,
+    userRole: string,
+  ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
-      throw new Error("Invalid withdrawal ID");
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
     }
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new Error("Invalid user ID");
+      throw new ApiError("Invalid user ID", 400, "INVALID_USER_ID");
     }
 
     const withdrawal = await WithdrawalRequest.findById(withdrawalId)
@@ -193,12 +289,19 @@ export class WithdrawalService {
       .lean();
 
     if (!withdrawal) {
-      throw new Error("Withdrawal request not found");
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
     }
 
     // Check access permissions
-    if (userRole !== Role.ADMIN && withdrawal.organizer._id.toString() !== userId) {
-      throw new Error("Access denied");
+    if (
+      userRole !== Role.ADMIN &&
+      withdrawal.organizer._id.toString() !== userId
+    ) {
+      throw new ApiError("Access denied", 403, "WITHDRAWAL_ACCESS_DENIED");
     }
 
     return withdrawal;
@@ -208,20 +311,28 @@ export class WithdrawalService {
   async approveWithdrawal(withdrawalId: string, adminId: string) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
-      throw new Error("Invalid withdrawal ID");
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
     }
     if (!mongoose.Types.ObjectId.isValid(adminId)) {
-      throw new Error("Invalid admin ID");
+      throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
 
     const withdrawal = await WithdrawalRequest.findById(withdrawalId);
 
     if (!withdrawal) {
-      throw new Error("Withdrawal request not found");
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
     }
 
     if (withdrawal.status !== WithdrawalStatus.REQUESTED) {
-      throw new Error("Only pending requests can be approved");
+      throw new ApiError(
+        "Only pending requests can be approved",
+        400,
+        "INVALID_WITHDRAWAL_STATUS",
+      );
     }
 
     withdrawal.status = WithdrawalStatus.APPROVED;
@@ -232,136 +343,158 @@ export class WithdrawalService {
   }
 
   // Reject withdrawal (admin only)
-  async rejectWithdrawal(withdrawalId: string, adminId: string, adminMessage?: string) {
+  async rejectWithdrawal(
+    withdrawalId: string,
+    adminId: string,
+    adminMessage?: string,
+  ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
-      throw new Error("Invalid withdrawal ID");
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
     }
     if (!mongoose.Types.ObjectId.isValid(adminId)) {
-      throw new Error("Invalid admin ID");
+      throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
 
     const withdrawal = await WithdrawalRequest.findById(withdrawalId);
 
     if (!withdrawal) {
-      throw new Error("Withdrawal request not found");
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
     }
 
     if (withdrawal.status !== WithdrawalStatus.REQUESTED) {
-      throw new Error("Only pending requests can be rejected");
+      throw new ApiError(
+        "Only pending requests can be rejected",
+        400,
+        "INVALID_WITHDRAWAL_STATUS",
+      );
     }
 
     withdrawal.status = WithdrawalStatus.REJECTED;
     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
-    withdrawal.adminMessage = adminMessage?.trim() || "Withdrawal request rejected";
+    withdrawal.adminMessage =
+      adminMessage?.trim() || "Withdrawal request rejected";
     await withdrawal.save();
 
     return withdrawal;
   }
 
   // Mark as paid (admin only)
-//   async markAsPaid(withdrawalId: string, adminId: string, paymentReference?: string) {
-//     // Validate ObjectIds
-//     if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
-//       throw new Error("Invalid withdrawal ID");
-//     }
-//     if (!mongoose.Types.ObjectId.isValid(adminId)) {
-//       throw new Error("Invalid admin ID");
-//     }
+  //   async markAsPaid(withdrawalId: string, adminId: string, paymentReference?: string) {
+  //     // Validate ObjectIds
+  //     if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+  //       throw new Error("Invalid withdrawal ID");
+  //     }
+  //     if (!mongoose.Types.ObjectId.isValid(adminId)) {
+  //       throw new Error("Invalid admin ID");
+  //     }
 
-//       const session = await mongoose.startSession();
-//       session.startTransaction();
+  //       const session = await mongoose.startSession();
+  //       session.startTransaction();
 
-//     const withdrawal = await WithdrawalRequest.findById(withdrawalId).populate("campaign");
+  //     const withdrawal = await WithdrawalRequest.findById(withdrawalId).populate("campaign");
 
-//     if (!withdrawal) {
-//       throw new Error("Withdrawal request not found");
-//     }
+  //     if (!withdrawal) {
+  //       throw new Error("Withdrawal request not found");
+  //     }
 
-//     if (withdrawal.status !== WithdrawalStatus.APPROVED) {
-//       throw new Error("Only approved requests can be marked as paid");
-//     }
+  //     if (withdrawal.status !== WithdrawalStatus.APPROVED) {
+  //       throw new Error("Only approved requests can be marked as paid");
+  //     }
 
-//     // Use transaction for data consistency
-//     const session = await mongoose.startSession();
-//     session.startTransaction();
+  //     // Use transaction for data consistency
+  //     const session = await mongoose.startSession();
+  //     session.startTransaction();
 
-//       try {
-//     const withdrawal = await WithdrawalRequest.findById(withdrawalId).session(session);
+  //       try {
+  //     const withdrawal = await WithdrawalRequest.findById(withdrawalId).session(session);
 
-//     if (!withdrawal) {
-//       throw new Error("Withdrawal request not found");
-//     }
+  //     if (!withdrawal) {
+  //       throw new Error("Withdrawal request not found");
+  //     }
 
-//     if (withdrawal.status !== WithdrawalStatus.APPROVED) {
-//       throw new Error("Only approved requests can be marked as paid");
-//     }
+  //     if (withdrawal.status !== WithdrawalStatus.APPROVED) {
+  //       throw new Error("Only approved requests can be marked as paid");
+  //     }
 
-//     // Update withdrawal only
-//     withdrawal.status = WithdrawalStatus.PAID;
-//     withdrawal.paidAt = new Date();
-//     withdrawal.paymentReference = paymentReference?.trim();
-//     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+  //     // Update withdrawal only
+  //     withdrawal.status = WithdrawalStatus.PAID;
+  //     withdrawal.paidAt = new Date();
+  //     withdrawal.paymentReference = paymentReference?.trim();
+  //     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
 
-//     await withdrawal.save({ session });
+  //     await withdrawal.save({ session });
 
-//     await session.commitTransaction();
-//     return withdrawal;
+  //     await session.commitTransaction();
+  //     return withdrawal;
 
-//   } catch (error) {
-//     await session.abortTransaction();
-//     throw error;
-//   } finally {
-//     session.endSession();
-//   }
-// }
-async markAsPaid(
-  withdrawalId: string,
-  adminId: string,
-  paymentReference?: string
-) {
-  if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
-    throw new Error("Invalid withdrawal ID");
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(adminId)) {
-    throw new Error("Invalid admin ID");
-  }
-
-  // ✅ Declare session ONLY ONCE here
-  const session = await mongoose.startSession();
-
-  try {
-    session.startTransaction();
-
-    const withdrawal = await WithdrawalRequest.findById(withdrawalId).session(session);
-
-    if (!withdrawal) {
-      throw new Error("Withdrawal request not found");
+  //   } catch (error) {
+  //     await session.abortTransaction();
+  //     throw error;
+  //   } finally {
+  //     session.endSession();
+  //   }
+  // }
+  async markAsPaid(
+    withdrawalId: string,
+    adminId: string,
+    paymentReference?: string,
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
     }
 
-    if (withdrawal.status !== WithdrawalStatus.APPROVED) {
-      throw new Error("Only approved requests can be marked as paid");
+    if (!mongoose.Types.ObjectId.isValid(adminId)) {
+      throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
 
-    withdrawal.status = WithdrawalStatus.PAID;
-    withdrawal.paidAt = new Date();
-    withdrawal.paymentReference = paymentReference?.trim();
-    withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+    // ✅ Declare session ONLY ONCE here
+    const session = await mongoose.startSession();
 
-    await withdrawal.save({ session });
+    try {
+      session.startTransaction();
 
-    await session.commitTransaction();
+      const withdrawal =
+        await WithdrawalRequest.findById(withdrawalId).session(session);
 
-    return withdrawal;
+      if (!withdrawal) {
+        throw new ApiError(
+          "Withdrawal request not found",
+          404,
+          "WITHDRAWAL_NOT_FOUND",
+        );
+      }
 
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
+      if (withdrawal.status !== WithdrawalStatus.APPROVED) {
+        throw new ApiError(
+          "Only approved requests can be marked as paid",
+          400,
+          "INVALID_WITHDRAWAL_STATUS",
+        );
+      }
+
+      withdrawal.status = WithdrawalStatus.PAID;
+      withdrawal.paidAt = new Date();
+      withdrawal.netAmountPaid = withdrawal.amountRequested; // Track actual amount paid
+      withdrawal.paymentReference = paymentReference?.trim();
+      withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+
+      await withdrawal.save({ session });
+
+      await session.commitTransaction();
+
+      return withdrawal;
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
   }
-}
 }
 
 export const withdrawalService = new WithdrawalService();

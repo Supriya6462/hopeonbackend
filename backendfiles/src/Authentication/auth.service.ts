@@ -7,6 +7,7 @@ import { generateToken } from "../utils/jwt.util.js";
 import { emailService } from "../utils/email.util.js";
 import { ApiError } from "../utils/ApiError.js";
 import { APIFeatures, QueryString } from "../utils/apiFeatures.js";
+import bcrypt from "bcryptjs";
 
 interface RegisterInput {
   name: string;
@@ -108,7 +109,7 @@ export class AuthService {
       throw new ApiError("Invalid email or password",400,"USER_INVALID_INPUT");
     }
     
-    const token = generateToken(user._id.toString());
+    // const token = generateToken(user._id.toString());
 
     return {
       user: {
@@ -121,12 +122,12 @@ export class AuthService {
         isOrganizerApproved: user.isOrganizerApproved,
         isEmailVerified: user.isEmailVerified,
       },
-      token,
+      // token,
     };
   }
 
   async getalluser(queryString: QueryString) {
-    const features = new APIFeatures(User, queryString).filter().search(["name, email"]).sort().limitFields().paginate();
+    const features = new APIFeatures(User, queryString).filter().search(["name", "email"]).sort().limitFields().paginate();
     const {results, pagination}= await features.exec();
     return {
       users: results,
@@ -179,11 +180,13 @@ export class AuthService {
     await Otp.deleteMany({ email, purpose });
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = await bcrypt.hash(otpCode, 10);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+   
 
     await Otp.create({
       email,
-      otpCode,
+      otpCode: hashedOtp,
       purpose,
       expiresAt,
       isUsed: false,
@@ -193,6 +196,7 @@ export class AuthService {
     try {
       await emailService.sendOTP(email, otpCode, purpose);
     } catch (error) {
+      await Otp.deleteMany({ email, purpose });
       throw new ApiError("Failed to send OTP email. Please try again.", 429, "OTP_TOO_MANY_REQUESTS");
     }
 
@@ -206,7 +210,6 @@ export class AuthService {
   async verifyOTP(email: string, otpCode: string, purpose: OtpPurpose) {
     const otp = await Otp.findOne({
       email,
-      otpCode,
       purpose,
       isUsed: false,
       expiresAt: { $gt: new Date() },
@@ -216,6 +219,11 @@ export class AuthService {
       throw new ApiError("Invalid or expired OTP",400, "OTP_EXPIRED");
     }
 
+    const isMatch = await bcrypt.compare(otpCode, otp.otpCode);
+      if (!isMatch) {
+    throw new ApiError("Invalid or expired OTP", 400, "OTP_INVALID");
+  }
+   await Otp.findByIdAndUpdate(otp._id, { isUsed: true });
     // If purpose is registration, create the actual user
     if (purpose === OtpPurpose.REGISTER) {
       // Get pending registration data
@@ -277,10 +285,6 @@ export class AuthService {
     await otp.save();
 
     return { message: "OTP verified successfully" };
-  }
-
-  async logout() {
-
   }
 }
 

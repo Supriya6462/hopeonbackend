@@ -9,6 +9,11 @@ declare namespace NodeJS {
     REFRESH_TOKEN_EXP?: string;
 
 
+    EMAIL_HOST: string;
+    EMAIL_PORT?: string;
+    EMAIL_USER: string;
+    EMAIL_PASS: string;
+    EMAIL_FROM: string;
 
     FRONTEND_URL?: string;
     PORT?: string;

@@ -2,10 +2,16 @@ import { OrganizerApplication } from "../models/OrganizerApplication.model.js";
 import { User } from "../models/User.model.js";
 import { Campaign } from "../models/Campaign.model.js";
 import { WithdrawalRequest } from "../models/WithdrawalRequest.model.js";
-import { ApplicationStatus, Role, OrganizationType, WithdrawalStatus } from "../types/enums.js";
+import {
+  ApplicationStatus,
+  Role,
+  OrganizationType,
+  WithdrawalStatus,
+} from "../types/enums.js";
 import mongoose from "mongoose";
 import { uploadToS3 } from "../utils/s3Upload.util.js";
 import { ApiError } from "../utils/ApiError.js";
+import { mailService } from "../mail/mail.service.js";
 
 interface SubmitApplicationDTO {
   organizationName: string;
@@ -34,18 +40,33 @@ interface ApplicationFilters {
 
 export class OrganizerService {
   // Submit organizer application
-  async submitApplication(userId: string, applicationData: SubmitApplicationDTO) {
+  async submitApplication(
+    userId: string,
+    applicationData: SubmitApplicationDTO,
+  ) {
     // Validate required fields
     if (!applicationData.organizationName || !applicationData.description) {
-      throw new ApiError("Organization name and description are required", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Organization name and description are required",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     if (applicationData.organizationName.trim().length < 3) {
-      throw new ApiError("Organization name must be at least 3 characters", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Organization name must be at least 3 characters",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     if (applicationData.description.trim().length < 20) {
-      throw new ApiError("Description must be at least 20 characters", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Description must be at least 20 characters",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     // Validate ObjectId
@@ -60,7 +81,11 @@ export class OrganizerService {
     });
 
     if (existingApp) {
-      throw new ApiError("You already have a pending or approved application", 409, "APPLICATION_EXISTS");
+      throw new ApiError(
+        "You already have a pending or approved application",
+        409,
+        "APPLICATION_EXISTS",
+      );
     }
 
     const application = await OrganizerApplication.create({
@@ -70,7 +95,8 @@ export class OrganizerService {
       contactEmail: applicationData.contactEmail,
       phoneNumber: applicationData.phoneNumber,
       website: applicationData.website,
-      organizationType: applicationData.organizationType || OrganizationType.OTHER,
+      organizationType:
+        applicationData.organizationType || OrganizationType.OTHER,
       documents: applicationData.documents,
       status: ApplicationStatus.PENDING,
     });
@@ -78,20 +104,34 @@ export class OrganizerService {
     return application;
   }
 
-
   //upload documents and submit during applying
-   // Step 1: Create draft application (Form 1 - basic info)
-  async createDraftApplication(userId: string, applicationData: SubmitApplicationDTO) {
+  // Step 1: Create draft application (Form 1 - basic info)
+  async createDraftApplication(
+    userId: string,
+    applicationData: SubmitApplicationDTO,
+  ) {
     if (!applicationData.organizationName || !applicationData.description) {
-      throw new ApiError("Organization name and description are required", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Organization name and description are required",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     if (applicationData.organizationName.trim().length < 3) {
-      throw new ApiError("Organization name must be at least 3 characters", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Organization name must be at least 3 characters",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     if (applicationData.description.trim().length < 20) {
-      throw new ApiError("Description must be at least 20 characters", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Description must be at least 20 characters",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     if (!mongoose.Types.ObjectId.isValid(userId)) {
@@ -100,7 +140,13 @@ export class OrganizerService {
 
     const existingApp = await OrganizerApplication.findOne({
       user: userId,
-      status: { $in: [ApplicationStatus.DRAFT, ApplicationStatus.PENDING, ApplicationStatus.APPROVED] },
+      status: {
+        $in: [
+          ApplicationStatus.DRAFT,
+          ApplicationStatus.PENDING,
+          ApplicationStatus.APPROVED,
+        ],
+      },
     });
 
     if (existingApp) {
@@ -111,11 +157,16 @@ export class OrganizerService {
         existingApp.contactEmail = applicationData.contactEmail;
         existingApp.phoneNumber = applicationData.phoneNumber;
         existingApp.website = applicationData.website;
-        existingApp.organizationType = applicationData.organizationType || OrganizationType.OTHER;
+        existingApp.organizationType =
+          applicationData.organizationType || OrganizationType.OTHER;
         await existingApp.save();
         return { application: existingApp, isUpdate: true };
       }
-      throw new ApiError("You already have a pending or approved application", 409, "APPLICATION_EXISTS");
+      throw new ApiError(
+        "You already have a pending or approved application",
+        409,
+        "APPLICATION_EXISTS",
+      );
     }
 
     const application = await OrganizerApplication.create({
@@ -125,7 +176,8 @@ export class OrganizerService {
       contactEmail: applicationData.contactEmail,
       phoneNumber: applicationData.phoneNumber,
       website: applicationData.website,
-      organizationType: applicationData.organizationType || OrganizationType.OTHER,
+      organizationType:
+        applicationData.organizationType || OrganizationType.OTHER,
       status: ApplicationStatus.DRAFT,
     });
 
@@ -136,45 +188,67 @@ export class OrganizerService {
   async uploadDocumentsAndSubmit(
     userId: string,
     applicationId: string,
-    files: DocumentFiles
+    files: DocumentFiles,
   ) {
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
-      throw new ApiError("Invalid application ID", 400, "INVALID_APPLICATION_ID");
+      throw new ApiError(
+        "Invalid application ID",
+        400,
+        "INVALID_APPLICATION_ID",
+      );
     }
 
     const application = await OrganizerApplication.findOne({
       _id: applicationId,
       user: userId,
-    });
+    }).populate("user", "name email");
 
     if (!application) {
       throw new ApiError("Application not found", 404, "APPLICATION_NOT_FOUND");
     }
 
     if (application.status !== ApplicationStatus.DRAFT) {
-      throw new ApiError("Can only upload documents to draft applications", 400, "INVALID_APPLICATION_STATUS");
+      throw new ApiError(
+        "Can only upload documents to draft applications",
+        400,
+        "INVALID_APPLICATION_STATUS",
+      );
     }
 
     // Validate required documents
     if (!files.governmentId?.[0] || !files.selfieWithId?.[0]) {
-      throw new ApiError("Government ID and Selfie with ID are required", 400, "MISSING_REQUIRED_DOCUMENTS");
+      throw new ApiError(
+        "Government ID and Selfie with ID are required",
+        400,
+        "MISSING_REQUIRED_DOCUMENTS",
+      );
     }
 
     // Additional validation for specific organization types
     if (
-      (application.organizationType === OrganizationType.NONPROFIT || 
-       application.organizationType === OrganizationType.CHARITY) &&
+      (application.organizationType === OrganizationType.NONPROFIT ||
+        application.organizationType === OrganizationType.CHARITY) &&
       !files.registrationCertificate?.[0]
     ) {
-      throw new ApiError("Registration certificate is required for nonprofit/charity organizations", 400, "MISSING_REGISTRATION_CERTIFICATE");
+      throw new ApiError(
+        "Registration certificate is required for nonprofit/charity organizations",
+        400,
+        "MISSING_REGISTRATION_CERTIFICATE",
+      );
     }
 
     const uploadFolder = `organizer-documents/${userId}/${applicationId}`;
     const documents: any = {};
 
     // Upload single documents
-    const singleDocFields = ["governmentId", "selfieWithId", "registrationCertificate", "taxId", "addressProof"] as const;
-    
+    const singleDocFields = [
+      "governmentId",
+      "selfieWithId",
+      "registrationCertificate",
+      "taxId",
+      "addressProof",
+    ] as const;
+
     for (const field of singleDocFields) {
       if (files[field]?.[0]) {
         const file = files[field]![0];
@@ -182,7 +256,7 @@ export class OrganizerService {
           file.buffer,
           `${uploadFolder}/${field}`,
           file.originalname,
-          file.mimetype
+          file.mimetype,
         );
         documents[field] = {
           url: result.url,
@@ -200,7 +274,7 @@ export class OrganizerService {
           file.buffer,
           `${uploadFolder}/additional`,
           file.originalname,
-          file.mimetype
+          file.mimetype,
         );
         documents.additionalDocuments.push({
           name: file.originalname,
@@ -216,6 +290,19 @@ export class OrganizerService {
     application.status = ApplicationStatus.PENDING;
     application.documentsVerified = false; // Admin needs to verify
     await application.save();
+
+    // Send email notification to user
+    const user = application.user as any;
+    try {
+      await mailService.sendOrganizerApplicationSubmitted({
+        to: user.email,
+        name: user.name,
+        organizationName: application.organizationName,
+      });
+    } catch (emailError) {
+      console.error("Failed to send application submitted email:", emailError);
+      // Don't fail the request if email fails
+    }
 
     return application;
   }
@@ -248,7 +335,10 @@ export class OrganizerService {
     const query: any = {};
 
     // Filter by status
-    if (filters.status && Object.values(ApplicationStatus).includes(filters.status)) {
+    if (
+      filters.status &&
+      Object.values(ApplicationStatus).includes(filters.status)
+    ) {
       query.status = filters.status;
     }
 
@@ -283,7 +373,11 @@ export class OrganizerService {
   async getApplicationById(applicationId: string) {
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
-      throw new ApiError("Invalid application ID", 400, "INVALID_APPLICATION_ID");
+      throw new ApiError(
+        "Invalid application ID",
+        400,
+        "INVALID_APPLICATION_ID",
+      );
     }
 
     const application = await OrganizerApplication.findById(applicationId)
@@ -299,28 +393,50 @@ export class OrganizerService {
   }
 
   // Approve application (admin only)
-  async approveApplication(applicationId: string, adminId: string, adminNotes?: string) {
+  async approveApplication(
+    applicationId: string,
+    adminId: string,
+    adminNotes?: string,
+  ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
-      throw new ApiError("Invalid application ID", 400, "INVALID_APPLICATION_ID");
+      throw new ApiError(
+        "Invalid application ID",
+        400,
+        "INVALID_APPLICATION_ID",
+      );
     }
     if (!mongoose.Types.ObjectId.isValid(adminId)) {
       throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
 
-    const application = await OrganizerApplication.findById(applicationId);
+    const application = await OrganizerApplication.findById(
+      applicationId,
+    ).populate("user", "name email");
 
     if (!application) {
       throw new ApiError("Application not found", 404, "APPLICATION_NOT_FOUND");
     }
 
     if (application.status !== ApplicationStatus.PENDING) {
-      throw new ApiError("Only pending applications can be approved", 400, "INVALID_APPLICATION_STATUS");
+      throw new ApiError(
+        "Only pending applications can be approved",
+        400,
+        "INVALID_APPLICATION_STATUS",
+      );
     }
 
-    // Use transaction for data consistency
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    // Get the user ID from populated document or ObjectId
+    const populatedUser = application.user as any;
+    const userId = populatedUser._id
+      ? populatedUser._id.toString()
+      : application.user.toString();
+
+    const user = await User.findById(userId).select("name email");
+
+    if (!user) {
+      throw new ApiError("User not found", 404, "USER_NOT_FOUND");
+    }
 
     try {
       // Update application status
@@ -331,25 +447,34 @@ export class OrganizerService {
       if (adminNotes) {
         application.adminNotes = adminNotes.trim();
       }
-      await application.save({ session });
+      await application.save();
 
       // Update user role and approval status
-      await User.findByIdAndUpdate(
-        application.user,
-        {
-          role: Role.ORGANIZER,
-          isOrganizerApproved: true,
-        },
-        { session }
-      );
+      await User.findByIdAndUpdate(userId, {
+        role: Role.ORGANIZER,
+        isOrganizerApproved: true,
+      });
 
-      await session.commitTransaction();
+      // Send approval email to user
+      try {
+        await mailService.sendOrganizerApplicationApproved({
+          to: user.email,
+          name: user.name,
+          organizationName: application.organizationName,
+        });
+      } catch (emailError) {
+        console.error("Failed to send approval email:", emailError);
+        // Don't fail the request if email fails
+      }
+
       return application;
     } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
+      console.error("Error approving application:", error);
+      throw new ApiError(
+        "Failed to approve application",
+        500,
+        "APPROVAL_FAILED",
+      );
     }
   }
 
@@ -358,40 +483,90 @@ export class OrganizerService {
     applicationId: string,
     adminId: string,
     rejectionReason?: string,
-    adminNotes?: string
+    adminNotes?: string,
   ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(applicationId)) {
-      throw new ApiError("Invalid application ID", 400, "INVALID_APPLICATION_ID");
+      throw new ApiError(
+        "Invalid application ID",
+        400,
+        "INVALID_APPLICATION_ID",
+      );
     }
     if (!mongoose.Types.ObjectId.isValid(adminId)) {
       throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
 
-    const application = await OrganizerApplication.findById(applicationId);
+    if (!rejectionReason || rejectionReason.trim().length < 10) {
+      throw new ApiError(
+        "Rejection reason must be at least 10 characters",
+        400,
+        "REJECTION_REASON_REQUIRED",
+      );
+    }
+
+    const application = await OrganizerApplication.findById(
+      applicationId,
+    ).populate("user", "name email");
 
     if (!application) {
       throw new ApiError("Application not found", 404, "APPLICATION_NOT_FOUND");
     }
 
     if (application.status !== ApplicationStatus.PENDING) {
-      throw new ApiError("Only pending applications can be rejected", 400, "INVALID_APPLICATION_STATUS");
+      throw new ApiError(
+        "Only pending applications can be rejected",
+        400,
+        "INVALID_APPLICATION_STATUS",
+      );
     }
 
+    const user = application.user as any;
+    const userEmail = user.email;
+    const userName = user.name;
+    const organizationName = application.organizationName;
+
+    // Update application with rejection details before deletion
     application.status = ApplicationStatus.REJECTED;
     application.reviewedBy = new mongoose.Types.ObjectId(adminId);
     application.reviewedAt = new Date();
-    application.rejectionReason = rejectionReason?.trim() || "Application rejected by admin";
+    application.rejectionReason = rejectionReason.trim();
     if (adminNotes) {
       application.adminNotes = adminNotes.trim();
     }
     await application.save();
 
-    return application;
+    // Send rejection email before deleting
+    let emailSent = false;
+    try {
+      await mailService.sendOrganizerApplicationRejected({
+        to: userEmail,
+        name: userName,
+        organizationName: organizationName,
+        rejectionReason: rejectionReason.trim(),
+      });
+      emailSent = true;
+    } catch (emailError) {
+      console.error("Failed to send rejection email:", emailError);
+      // Continue with deletion even if email fails
+    }
+
+    // Delete the rejected application from database
+    await OrganizerApplication.findByIdAndDelete(applicationId);
+
+    return {
+      message: "Application rejected and removed from database",
+      rejectionReason: rejectionReason.trim(),
+      userNotified: emailSent,
+    };
   }
 
   // Revoke organizer privileges (admin only)
-  async revokeOrganizer(organizerId: string, adminId: string, revocationReason: string) {
+  async revokeOrganizer(
+    organizerId: string,
+    adminId: string,
+    revocationReason: string,
+  ) {
     // Validate ObjectIds
     if (!mongoose.Types.ObjectId.isValid(organizerId)) {
       throw new ApiError("Invalid organizer ID", 400, "INVALID_ORGANIZER_ID");
@@ -402,7 +577,11 @@ export class OrganizerService {
 
     // Validate reason
     if (!revocationReason || revocationReason.trim().length < 10) {
-      throw new ApiError("Revocation reason must be at least 10 characters", 400, "VALIDATION_ERROR");
+      throw new ApiError(
+        "Revocation reason must be at least 10 characters",
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     const user = await User.findById(organizerId);
@@ -416,7 +595,11 @@ export class OrganizerService {
     }
 
     if (user.isOrganizerRevoked) {
-      throw new ApiError("Organizer is already revoked", 400, "ORGANIZER_ALREADY_REVOKED");
+      throw new ApiError(
+        "Organizer is already revoked",
+        400,
+        "ORGANIZER_ALREADY_REVOKED",
+      );
     }
 
     // Use transaction for data consistency
@@ -434,11 +617,11 @@ export class OrganizerService {
       // Close all active campaigns by this organizer
       await Campaign.updateMany(
         { owner: organizerId, isClosed: false },
-        { 
+        {
           isClosed: true,
-          $set: { closedReason: "Organizer account revoked" }
+          $set: { closedReason: "Organizer account revoked" },
         },
-        { session }
+        { session },
       );
 
       // Reject all pending withdrawal requests
@@ -449,7 +632,7 @@ export class OrganizerService {
           adminMessage: "Organizer account has been revoked",
           reviewedBy: adminId,
         },
-        { session }
+        { session },
       );
 
       await session.commitTransaction();
@@ -491,7 +674,11 @@ export class OrganizerService {
     }
 
     if (!user.isOrganizerRevoked) {
-      throw new ApiError("Organizer is not revoked", 400, "ORGANIZER_NOT_REVOKED");
+      throw new ApiError(
+        "Organizer is not revoked",
+        400,
+        "ORGANIZER_NOT_REVOKED",
+      );
     }
 
     // Reinstate organizer
@@ -509,7 +696,9 @@ export class OrganizerService {
   }
 
   // Get all organizers (admin only)
-  async getAllOrganizers(filters: { status?: string; page?: number; limit?: number } = {}) {
+  async getAllOrganizers(
+    filters: { status?: string; page?: number; limit?: number } = {},
+  ) {
     const query: any = { role: Role.ORGANIZER };
 
     // Filter by status
