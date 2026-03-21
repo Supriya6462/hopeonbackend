@@ -1401,7 +1401,8 @@ User      Frontend    Backend API   AWS S3    Database   Email Service
  │            │            │           │          │            │
  │            │            │ Check     │          │            │
  │            │            │ existing  │          │            │
- │            │            │ application          │            │
+ │            │           
+    │ application          │            │
  │            │            │─────────────────────>│            │
  │            │            │           │          │            │
  │            │            │ No pending│          │            │

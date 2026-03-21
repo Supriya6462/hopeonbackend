@@ -24,9 +24,21 @@ export interface IUser extends Document {
 const UserSchema = new Schema<IUser>(
   {
     name: { type: String, required: true, trim: true, maxLength: 100 },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true, maxLength: 100 },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      maxLength: 100,
+    },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: Object.values(Role), default: Role.DONOR, required: true },
+    role: {
+      type: String,
+      enum: Object.values(Role),
+      default: Role.DONOR,
+      required: true,
+    },
     phoneNumber: { type: String, trim: true, default: null },
     image: { type: String, default: null },
     isEmailVerified: { type: Boolean, default: false },
@@ -34,11 +46,16 @@ const UserSchema = new Schema<IUser>(
     isOrganizerRevoked: { type: Boolean, default: false },
     revokedAt: { type: Date, default: null },
     revokedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
-    revocationReason: { type: String, trim: true, maxLength: 500, default: null },
+    revocationReason: {
+      type: String,
+      trim: true,
+      maxLength: 500,
+      default: null,
+    },
     resetToken: { type: String, default: null },
     resetTokenExpiry: { type: Date, default: null },
   },
-  { timestamps: true, versionKey: false }
+  { timestamps: true, versionKey: false },
 );
 
 UserSchema.index({ email: 1 });
