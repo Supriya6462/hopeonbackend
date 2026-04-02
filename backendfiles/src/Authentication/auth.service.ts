@@ -3,7 +3,7 @@ import { Otp } from "../models/Otp.model.js";
 import { PendingRegistration } from "../models/PendingRegistration.model.js";
 import { Role, OtpPurpose } from "../types/enums.js";
 import { hashPassword, comparePassword } from "../utils/password.util.js";
-import { generateToken } from "../utils/jwt.util.js";
+import { generateAccessToken } from "../utils/generateTokens.js";
 import { emailService } from "../utils/email.util.js";
 import { ApiError } from "../utils/ApiError.js";
 import { APIFeatures, QueryString } from "../utils/apiFeatures.js";
@@ -18,6 +18,12 @@ interface RegisterInput {
 
 interface LoginInput {
   email: string;
+  password: string;
+}
+
+interface ResetPasswordInput {
+  email: string;
+  otpCode: string;
   password: string;
 }
 
@@ -336,7 +342,7 @@ export class AuthService {
       await PendingRegistration.deleteOne({ email: normalizedEmail });
 
       // Generate token
-      const token = generateToken(user._id.toString());
+      const token = generateAccessToken(user._id.toString());
 
       return {
         message: "Registration completed successfully! You can now login.",
@@ -359,6 +365,130 @@ export class AuthService {
     await otp.save();
 
     return { message: "OTP verified successfully" };
+  }
+
+  async forgotPassword(email: string) {
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      throw new ApiError("Email is required", 400, "EMAIL_REQUIRED");
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      // Avoid account enumeration
+      return {
+        message: "If that email exists, an OTP has been sent.",
+        expiresIn: "10 minutes",
+      };
+    }
+
+    await Otp.deleteMany({
+      email: normalizedEmail,
+      purpose: {
+        $in: [OtpPurpose.FORGOT_PASSWORD, OtpPurpose.FORGET_PASSWORD],
+      },
+    });
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = await bcrypt.hash(otpCode, 10);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await Otp.create({
+      email: normalizedEmail,
+      otpCode: hashedOtp,
+      purpose: OtpPurpose.FORGOT_PASSWORD,
+      expiresAt,
+      isUsed: false,
+    });
+
+    await emailService.sendOTP(
+      normalizedEmail,
+      otpCode,
+      OtpPurpose.FORGOT_PASSWORD,
+    );
+
+    return {
+      message: "If that email exists, an OTP has been sent.",
+      expiresIn: "10 minutes",
+    };
+  }
+
+  async verifyResetOtp(email: string, otpCode: string) {
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !otpCode) {
+      throw new ApiError(
+        "Email and OTP are required",
+        400,
+        "OTP_VALIDATION_INPUT_ERROR",
+      );
+    }
+
+    const otp = await Otp.findOne({
+      email: normalizedEmail,
+      purpose: {
+        $in: [OtpPurpose.FORGOT_PASSWORD, OtpPurpose.FORGET_PASSWORD],
+      },
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!otp) {
+      throw new ApiError("Invalid or expired OTP", 400, "OTP_EXPIRED");
+    }
+
+    const isMatch = await bcrypt.compare(otpCode, otp.otpCode);
+    if (!isMatch) {
+      throw new ApiError("Invalid or expired OTP", 400, "OTP_INVALID");
+    }
+
+    return { message: "OTP verified successfully" };
+  }
+
+  async resetPassword(data: ResetPasswordInput) {
+    const normalizedEmail = data.email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !data.otpCode || !data.password) {
+      throw new ApiError(
+        "Email, OTP and password are required",
+        400,
+        "PASSWORD_RESET_VALIDATION_ERROR",
+      );
+    }
+
+    const otp = await Otp.findOne({
+      email: normalizedEmail,
+      purpose: {
+        $in: [OtpPurpose.FORGOT_PASSWORD, OtpPurpose.FORGET_PASSWORD],
+      },
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!otp) {
+      throw new ApiError("Invalid or expired OTP", 400, "OTP_EXPIRED");
+    }
+
+    const isMatch = await bcrypt.compare(data.otpCode, otp.otpCode);
+    if (!isMatch) {
+      throw new ApiError("Invalid or expired OTP", 400, "OTP_INVALID");
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      throw new ApiError("User not found", 404, "USER_NOT_FOUND");
+    }
+
+    user.passwordHash = await hashPassword(data.password);
+    user.resetToken = undefined;
+    user.resetTokenExpiry = undefined;
+    await user.save();
+
+    otp.isUsed = true;
+    await otp.save();
+
+    return { message: "Password reset successful" };
   }
 }
 
