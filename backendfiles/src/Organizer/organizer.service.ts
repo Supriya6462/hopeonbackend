@@ -99,6 +99,13 @@ export class OrganizerService {
         applicationData.organizationType || OrganizationType.OTHER,
       documents: applicationData.documents,
       status: ApplicationStatus.PENDING,
+      statusHistory: [
+        {
+          fromStatus: null,
+          toStatus: ApplicationStatus.PENDING,
+          changedBy: new mongoose.Types.ObjectId(userId),
+        },
+      ],
     });
 
     return application;
@@ -179,6 +186,13 @@ export class OrganizerService {
       organizationType:
         applicationData.organizationType || OrganizationType.OTHER,
       status: ApplicationStatus.DRAFT,
+      statusHistory: [
+        {
+          fromStatus: null,
+          toStatus: ApplicationStatus.DRAFT,
+          changedBy: new mongoose.Types.ObjectId(userId),
+        },
+      ],
     });
 
     return { application, isUpdate: false };
@@ -287,8 +301,14 @@ export class OrganizerService {
 
     // Update application with documents and change status to PENDING
     application.documents = documents;
+    const previousStatus = application.status;
     application.status = ApplicationStatus.PENDING;
     application.documentsVerified = false; // Admin needs to verify
+    application.statusHistory.push({
+      fromStatus: previousStatus,
+      toStatus: ApplicationStatus.PENDING,
+      changedBy: new mongoose.Types.ObjectId(userId),
+    });
     await application.save();
 
     // Send email notification to user
@@ -440,6 +460,7 @@ export class OrganizerService {
 
     try {
       // Update application status
+      const previousStatus = application.status;
       application.status = ApplicationStatus.APPROVED;
       application.reviewedBy = new mongoose.Types.ObjectId(adminId);
       application.reviewedAt = new Date();
@@ -447,6 +468,12 @@ export class OrganizerService {
       if (adminNotes) {
         application.adminNotes = adminNotes.trim();
       }
+      application.statusHistory.push({
+        fromStatus: previousStatus,
+        toStatus: ApplicationStatus.APPROVED,
+        changedBy: new mongoose.Types.ObjectId(adminId),
+        reason: adminNotes?.trim() || null,
+      });
       await application.save();
 
       // Update user role and approval status
@@ -527,6 +554,7 @@ export class OrganizerService {
     const organizationName = application.organizationName;
 
     // Update application with rejection details before deletion
+    const previousStatus = application.status;
     application.status = ApplicationStatus.REJECTED;
     application.reviewedBy = new mongoose.Types.ObjectId(adminId);
     application.reviewedAt = new Date();
@@ -534,6 +562,12 @@ export class OrganizerService {
     if (adminNotes) {
       application.adminNotes = adminNotes.trim();
     }
+    application.statusHistory.push({
+      fromStatus: previousStatus,
+      toStatus: ApplicationStatus.REJECTED,
+      changedBy: new mongoose.Types.ObjectId(adminId),
+      reason: rejectionReason.trim(),
+    });
     await application.save();
 
     // Send rejection email before deleting
@@ -616,10 +650,11 @@ export class OrganizerService {
 
       // Close all active campaigns by this organizer
       await Campaign.updateMany(
-        { owner: organizerId, isClosed: false },
+        { owner: organizerId, status: { $ne: "expired" } },
         {
-          isClosed: true,
-          $set: { closedReason: "Organizer account revoked" },
+          status: "expired",
+          endedAt: new Date(),
+          isDonationEnabled: false,
         },
         { session },
       );
@@ -631,6 +666,26 @@ export class OrganizerService {
           status: WithdrawalStatus.REJECTED,
           adminMessage: "Organizer account has been revoked",
           reviewedBy: adminId,
+        },
+        { session },
+      );
+
+      // Mark approved organizer application as revoked for audit history.
+      await OrganizerApplication.updateMany(
+        { user: organizerId, status: ApplicationStatus.APPROVED },
+        {
+          status: ApplicationStatus.REVOKED,
+          reviewedBy: new mongoose.Types.ObjectId(adminId),
+          reviewedAt: new Date(),
+          $push: {
+            statusHistory: {
+              fromStatus: ApplicationStatus.APPROVED,
+              toStatus: ApplicationStatus.REVOKED,
+              changedBy: new mongoose.Types.ObjectId(adminId),
+              reason: revocationReason.trim(),
+              changedAt: new Date(),
+            },
+          },
         },
         { session },
       );

@@ -7,19 +7,39 @@ import { Donation } from "../models/Donation.model.js";
 
 interface CreateWithdrawalDTO {
   campaign: string;
+  amount?: number;
   amountRequested: number;
   payoutMethod: string;
   bankDetails?: {
     accountHolderName?: string;
     bankName?: string;
     accountNumber?: string;
-    branchName?: string;
+    accountType?: "savings" | "checking" | "business";
+    routingNumber?: string;
     swiftCode?: string;
+    iban?: string;
+    bankAddress?: string;
+    bankCountry?: string;
   };
-  paypalEmail?: string;
-  cryptoDetails?: {
-    walletAddress?: string;
-    network?: string;
+  documents?: {
+    governmentId?: { url?: string; type?: string; verified?: boolean };
+    bankProof?: { url?: string; type?: string; verified?: boolean };
+    addressProof?: { url?: string; type?: string; verified?: boolean };
+    taxDocument?: { url?: string; type?: string; verified?: boolean };
+  };
+  kycInfo?: {
+    fullLegalName?: string;
+    dateOfBirth?: Date | string;
+    nationality?: string;
+    address?: {
+      street?: string;
+      city?: string;
+      state?: string;
+      postalCode?: string;
+      country?: string;
+    };
+    phoneNumber?: string;
+    taxId?: string;
   };
   reason?: string;
 }
@@ -31,6 +51,10 @@ interface WithdrawalFilters {
 }
 
 export class WithdrawalService {
+  private isCampaignApproved(campaign: { status?: string }) {
+    return campaign.status === "active" || campaign.status === "expired";
+  }
+
   // Get total donations (net amount) for a campaign
   private async getCampaignTotalDonations(campaignId: string): Promise<number> {
     const result = await Donation.aggregate([
@@ -43,7 +67,7 @@ export class WithdrawalService {
       {
         $group: {
           _id: null,
-          total: { $sum: "$netAmount" },
+          total: { $sum: "$amount" },
         },
       },
     ]);
@@ -63,7 +87,7 @@ export class WithdrawalService {
       {
         $group: {
           _id: null,
-          total: { $sum: "$amountRequested" },
+          total: { $sum: "$amount" },
         },
       },
     ]);
@@ -87,7 +111,7 @@ export class WithdrawalService {
       {
         $group: {
           _id: null,
-          total: { $sum: "$amountRequested" },
+          total: { $sum: "$amount" },
         },
       },
     ]);
@@ -117,7 +141,7 @@ export class WithdrawalService {
     // Validate required fields
     if (
       !withdrawalData.campaign ||
-      !withdrawalData.amountRequested ||
+      !(withdrawalData.amountRequested ?? withdrawalData.amount) ||
       !withdrawalData.payoutMethod
     ) {
       throw new ApiError(
@@ -128,7 +152,9 @@ export class WithdrawalService {
     }
 
     // Validate amount
-    const amountRequested = Number(withdrawalData.amountRequested);
+    const amountRequested = Number(
+      withdrawalData.amountRequested ?? withdrawalData.amount,
+    );
     if (isNaN(amountRequested) || amountRequested <= 0) {
       throw new ApiError(
         "Amount requested must be a positive number",
@@ -159,7 +185,7 @@ export class WithdrawalService {
       );
     }
 
-    if (!campaignDoc.isApproved) {
+    if (!this.isCampaignApproved(campaignDoc)) {
       throw new ApiError(
         "Campaign must be approved before requesting withdrawal",
         400,
@@ -199,18 +225,19 @@ export class WithdrawalService {
       );
     }
 
-    const withdrawal = await WithdrawalRequest.create({
+    const withdrawal = new WithdrawalRequest({
       organizer: organizerId,
       campaign: withdrawalData.campaign,
-      amountRequested,
+      amount: amountRequested,
       availableBalanceSnapshot: availableBalance, // Record the available balance at time of request
-      payoutMethod: withdrawalData.payoutMethod,
       bankDetails: withdrawalData.bankDetails,
-      paypalEmail: withdrawalData.paypalEmail,
-      cryptoDetails: withdrawalData.cryptoDetails,
-      reason: withdrawalData.reason,
+      documents: withdrawalData.documents,
+      kycInfo: withdrawalData.kycInfo,
+      reviewNotes: withdrawalData.reason,
       status: WithdrawalStatus.REQUESTED,
     });
+
+    await withdrawal.save();
 
     return withdrawal;
   }
@@ -223,7 +250,7 @@ export class WithdrawalService {
     }
 
     return WithdrawalRequest.find({ organizer: organizerId })
-      .populate("campaign", "title raised target")
+      .populate("campaign", "title raised target imageURL")
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -248,7 +275,7 @@ export class WithdrawalService {
     const [withdrawals, total] = await Promise.all([
       WithdrawalRequest.find(query)
         .populate("organizer", "name email phoneNumber")
-        .populate("campaign", "title raised target")
+        .populate("campaign", "title raised target imageURL")
         .populate("reviewedBy", "name email")
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -284,7 +311,7 @@ export class WithdrawalService {
 
     const withdrawal = await WithdrawalRequest.findById(withdrawalId)
       .populate("organizer", "name email phoneNumber")
-      .populate("campaign", "title raised target owner")
+      .populate("campaign", "title raised target owner imageURL")
       .populate("reviewedBy", "name email")
       .lean();
 
@@ -376,7 +403,8 @@ export class WithdrawalService {
 
     withdrawal.status = WithdrawalStatus.REJECTED;
     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
-    withdrawal.adminMessage =
+    withdrawal.reviewedAt = new Date();
+    withdrawal.rejectionReason =
       adminMessage?.trim() || "Withdrawal request rejected";
     await withdrawal.save();
 
@@ -478,9 +506,9 @@ export class WithdrawalService {
       }
 
       withdrawal.status = WithdrawalStatus.PAID;
-      withdrawal.paidAt = new Date();
-      withdrawal.netAmountPaid = withdrawal.amountRequested; // Track actual amount paid
-      withdrawal.paymentReference = paymentReference?.trim();
+      withdrawal.completedAt = new Date();
+      withdrawal.transactionReference = paymentReference?.trim();
+      withdrawal.reviewedAt = new Date();
       withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
 
       await withdrawal.save({ session });

@@ -1,38 +1,66 @@
-import mongoose, { Schema, Document } from "mongoose";
-import { FundingType } from "../types/enums";
+import mongoose, { Document } from "mongoose";
 
 export interface ICampaign extends Document {
   _id: mongoose.Types.ObjectId;
   title: string;
-  description?: string;
-  images: string[];
+  description: string;
+  imageURL: string;
   target: number;
-  fundingType: FundingType;
+  raised: number;
+  status: "active" | "expired" | "inactive";
+  deadlineAt: Date;
+  endedAt?: Date | null;
+  expiresProcessedAt?: Date | null;
+  isDonationEnabled: boolean;
   owner: mongoose.Types.ObjectId;
-  isApproved: boolean;
-  isClosed: boolean;
-  closedReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const CampaignSchema = new Schema<ICampaign>(
+const CampaignSchema = new mongoose.Schema(
   {
-    title: { type: String, required: true, trim: true, maxLength: 150 },
-    description: { type: String, trim: true, maxLength: 2000 },
-    images: [{ type: String }],
+    title: { type: String, required: true, trim: true },
+    description: { type: String, required: true, trim: true },
+    imageURL: { type: String, required: true },
     target: { type: Number, required: true, min: 0 },
-    fundingType: { type: String, enum: Object.values(FundingType), default: FundingType.FLEXIBLE },
-    owner: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    isApproved: { type: Boolean, default: false },
-    isClosed: { type: Boolean, default: false },
-    closedReason: { type: String, trim: true, maxLength: 200, default: null },
+    raised: { type: Number, default: 0, min: 0 },
+    status: {
+      type: String,
+      enum: ["active", "expired", "inactive"],
+      default: "active",
+      index: true,
+    },
+    deadlineAt: {
+      type: Date,
+      default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      index: true,
+    },
+    endedAt: {
+      type: Date,
+      default: null,
+    },
+    expiresProcessedAt: {
+      type: Date,
+      default: null,
+    },
+    isDonationEnabled: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    owner: {
+      type: mongoose.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
   },
-  { timestamps: true, versionKey: false }
+  { timestamps: true },
 );
 
-CampaignSchema.index({ owner: 1 });
-CampaignSchema.index({ isApproved: 1, isClosed: 1 });
-CampaignSchema.index({ title: "text" });
+// Indexes for performance
+CampaignSchema.index({ createdAt: -1 });
+CampaignSchema.index({ raised: 1, target: 1 });
+CampaignSchema.index({ status: 1, deadlineAt: 1 });
 
 export const Campaign = mongoose.model<ICampaign>("Campaign", CampaignSchema);

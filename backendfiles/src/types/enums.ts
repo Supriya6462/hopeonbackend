@@ -7,19 +7,19 @@ export enum Role {
 export enum PaymentProvider {
   PAYPAL = "paypal",
   CRYPTO = "crypto",
-  ESEWA="esewa",
-  KHALTI="khalti"
+  ESEWA = "esewa",
+  KHALTI = "khalti",
 }
 
 export enum DonationStatus {
-  CREATED = "created",
-  PENDING = "pending",
-  PROCESSING = "processing",
-  COMPLETED = "completed",
-  FAILED = "failed",
-  CANCELLED = "cancelled",
-  REFUNDED = "refunded",
-  EXPIRED = "expired",
+  CREATED = "CREATED",
+  PENDING = "PENDING",
+  PROCESSING = "PROCESSING",
+  COMPLETED = "COMPLETED",
+  FAILED = "FAILED",
+  CANCELLED = "CANCELLED",
+  REFUNDED = "REFUNDED",
+  EXPIRED = "EXPIRED",
 }
 
 export enum CryptoNetwork {
@@ -33,20 +33,24 @@ export enum ApplicationStatus {
   PENDING = "pending",
   APPROVED = "approved",
   REJECTED = "rejected",
+  REVOKED = "revoked",
 }
 
 export enum OtpPurpose {
   REGISTER = "register",
   FORGOT_PASSWORD = "forgot-password",
+  FORGET_PASSWORD = "forget-password",
 }
 
 export enum WithdrawalStatus {
-  REQUESTED = "requested",
+  REQUESTED = "pending",
+  PENDING = "pending",
   UNDER_REVIEW = "under_review",
   APPROVED = "approved",
   REJECTED = "rejected",
-  PROCESSING = "processing",
-  PAID = "paid",
+  PROCESSING = "under_review",
+  PAID = "completed",
+  COMPLETED = "completed",
   FAILED = "failed",
 }
 
@@ -62,11 +66,11 @@ export enum PayoutMethod {
   BANK = "bank",
   PAYPAL = "paypal",
   CRYPTO = "crypto",
-  ESEWA="esewa",
-  KHALTI="khalti"
+  ESEWA = "esewa",
+  KHALTI = "khalti",
 }
 
 export enum FundingType {
   FLEXIBLE = "flexible",
-  ALL_OR_NOTHING = "all_or_nothing"
+  ALL_OR_NOTHING = "all_or_nothing",
 }

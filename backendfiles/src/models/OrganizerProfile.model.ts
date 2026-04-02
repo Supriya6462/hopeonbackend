@@ -1,53 +1,35 @@
 import mongoose from "mongoose";
 import { encrypt, decrypt, maskSensitiveData } from "../utils/encryption.js";
 
-const WithdrawalRequestSchema = new mongoose.Schema(
+const OrganizerProfileSchema = new mongoose.Schema(
   {
     organizer: {
       type: mongoose.Types.ObjectId,
       ref: "User",
       required: true,
+      unique: true,
       index: true,
     },
-    organizerProfile: {
-      type: mongoose.Types.ObjectId,
-      ref: "OrganizerProfile",
-      default: null,
-      index: true,
-    },
-    campaign: {
-      type: mongoose.Types.ObjectId,
-      ref: "Campaign",
-      required: true,
-      index: true,
-    },
-    amount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    availableBalanceSnapshot: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    totalRaisedSnapshot: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    totalWithdrawnSnapshot: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    status: {
+    verificationStatus: {
       type: String,
-      enum: ["pending", "under_review", "approved", "rejected", "completed"],
+      enum: ["pending", "verified", "rejected"],
       default: "pending",
       index: true,
     },
-    // Bank Account Details (sensitive data encrypted)
+    verifiedBy: {
+      type: mongoose.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     bankDetails: {
       accountHolderName: { type: String, required: true, trim: true },
       bankName: { type: String, required: true, trim: true },
@@ -64,45 +46,43 @@ const WithdrawalRequestSchema = new mongoose.Schema(
       bankAddress: { type: String, trim: true },
       bankCountry: { type: String, required: true, trim: true },
     },
-    // KYC Documents
     documents: {
       governmentId: {
         url: { type: String, required: true },
+        key: { type: String, trim: true },
         type: {
           type: String,
           enum: ["passport", "drivers_license", "national_id"],
           required: true,
         },
-        verified: { type: Boolean, default: false },
       },
       bankProof: {
         url: { type: String, required: true },
+        key: { type: String, trim: true },
         type: {
           type: String,
           enum: ["bank_statement", "bank_letter", "cancelled_check"],
           required: true,
         },
-        verified: { type: Boolean, default: false },
       },
       addressProof: {
         url: { type: String, required: true },
+        key: { type: String, trim: true },
         type: {
           type: String,
           enum: ["utility_bill", "bank_statement", "government_letter"],
           required: true,
         },
-        verified: { type: Boolean, default: false },
       },
       taxDocument: {
         url: { type: String },
+        key: { type: String, trim: true },
         type: {
           type: String,
           enum: ["tax_id", "ssn", "ein", "vat_certificate"],
         },
-        verified: { type: Boolean, default: false },
       },
     },
-    // Personal Information for KYC
     kycInfo: {
       fullLegalName: { type: String, required: true, trim: true },
       dateOfBirth: { type: Date, required: true },
@@ -117,37 +97,15 @@ const WithdrawalRequestSchema = new mongoose.Schema(
       phoneNumber: { type: String, required: true, trim: true },
       taxId: { type: String, trim: true },
     },
-    // Admin Review
-    reviewedBy: {
-      type: mongoose.Types.ObjectId,
-      ref: "User",
-    },
-    reviewedAt: Date,
-    reviewNotes: { type: String, trim: true },
-    rejectionReason: { type: String, trim: true },
-    // Transaction Details
-    transactionReference: { type: String, trim: true },
-    completedAt: Date,
-    processingFee: { type: Number, default: 0, min: 0 },
-    netAmount: { type: Number },
   },
   { timestamps: true },
 );
 
-// Indexes for performance
-WithdrawalRequestSchema.index({ organizer: 1, createdAt: -1 });
-WithdrawalRequestSchema.index({ status: 1, createdAt: -1 });
-WithdrawalRequestSchema.index({ reviewedBy: 1 });
+OrganizerProfileSchema.index({ verificationStatus: 1, updatedAt: -1 });
 
-// Encrypt sensitive bank data before saving
-WithdrawalRequestSchema.pre("save", function () {
+OrganizerProfileSchema.pre("save", function () {
   const bankDetails = this.bankDetails as any;
   const kycInfo = this.kycInfo as any;
-
-  // Calculate net amount
-  if (this.isModified("amount") || this.isModified("processingFee")) {
-    this.netAmount = this.amount - this.processingFee;
-  }
 
   if (
     this.isModified("bankDetails.accountNumber") &&
@@ -178,7 +136,7 @@ WithdrawalRequestSchema.pre("save", function () {
   }
 });
 
-WithdrawalRequestSchema.methods.getDecryptedBankDetails = function () {
+OrganizerProfileSchema.methods.getDecryptedBankDetails = function () {
   const bankDetails = this.bankDetails as any;
 
   return {
@@ -194,7 +152,7 @@ WithdrawalRequestSchema.methods.getDecryptedBankDetails = function () {
   };
 };
 
-WithdrawalRequestSchema.methods.getMaskedBankDetails = function () {
+OrganizerProfileSchema.methods.getMaskedBankDetails = function () {
   const bankDetails = this.bankDetails as any;
 
   return {
@@ -209,7 +167,9 @@ WithdrawalRequestSchema.methods.getMaskedBankDetails = function () {
   };
 };
 
-export const WithdrawalRequest = mongoose.model(
-  "WithdrawalRequest",
-  WithdrawalRequestSchema,
+const OrganizerProfile = mongoose.model(
+  "OrganizerProfile",
+  OrganizerProfileSchema,
 );
+
+export default OrganizerProfile;

@@ -3,11 +3,14 @@ import { Donation } from "../models/Donation.model";
 import { DonationStatus } from "../types/enums";
 import { InitiatePaymentDTO } from "./dto/initiate-payment.dto";
 import { VerifyPaymentDTO } from "./dto/verify-payment.dto";
-import { PaymentFactory } from "./payment.factory";
+import { PayPalProvider } from "./providers/paypal.provider";
 import { ApiError } from "../utils/ApiError";
 
 export class PaymentService {
-  async initiate(userId: string, payload: Omit<InitiatePaymentDTO, "amount" | "currency">) {
+  async initiate(
+    userId: string,
+    payload: Omit<InitiatePaymentDTO, "amount" | "currency">,
+  ) {
     // Validate donation exists
     const donation = await Donation.findById(payload.donationId);
     if (!donation) {
@@ -16,35 +19,43 @@ export class PaymentService {
 
     // Verify ownership
     if (donation.donor.toString() !== userId) {
-      throw new ApiError("Unauthorized to initiate payment for this donation", 403, "UNAUTHORIZED");
+      throw new ApiError(
+        "Unauthorized to initiate payment for this donation",
+        403,
+        "UNAUTHORIZED",
+      );
     }
 
     // Check donation status
     if (donation.status !== DonationStatus.PENDING) {
-      throw new ApiError("Donation already processed", 400, "DONATION_ALREADY_PROCESSED");
+      throw new ApiError(
+        "Donation already processed",
+        400,
+        "DONATION_ALREADY_PROCESSED",
+      );
     }
 
     // Get payment provider strategy
-    const strategy = PaymentFactory.create(donation.method);
+    const strategy = new PayPalProvider();
 
-      // Initiate payment with provider
-      const result = await strategy.initiate({
-        donationId: donation._id.toString(),
-        amount: donation.amount,
+    // Initiate payment with provider
+    const result = await strategy.initiate({
+      donationId: donation._id.toString(),
+      amount: donation.amount,
       currency: "USD",
-        returnUrl: payload.returnUrl,
-      });
+      returnUrl: payload.returnUrl,
+    });
 
     // Save transaction ID if provided (e.g., PayPal orderId, Khalti pidx)
     if (result.formData?.orderId) {
       donation.transactionId = result.formData.orderId;
+      donation.paypalOrderId = result.formData.orderId;
     }
 
-    donation.paymentInitiatedAt = new Date();
-      await donation.save();
-      
+    await donation.save();
+
     return result;
-    }
+  }
 
   // async verify(userId: string, payload: VerifyPaymentDTO) {
   //   // Validate donation exists
@@ -117,78 +128,74 @@ export class PaymentService {
   //   }
   // }
   async verify(userId: string, payload: VerifyPaymentDTO) {
-  const donation = await Donation.findById(payload.donationId);
+    const donation = await Donation.findById(payload.donationId);
 
-  if (!donation) {
-    throw new ApiError("Donation not found", 404, "DONATION_NOT_FOUND");
+    if (!donation) {
+      throw new ApiError("Donation not found", 404, "DONATION_NOT_FOUND");
+    }
+
+    if (donation.donor.toString() !== userId) {
+      throw new ApiError("Unauthorized", 403, "UNAUTHORIZED");
+    }
+
+    if (donation.status === DonationStatus.COMPLETED) {
+      return { success: true, message: "Payment already verified" };
+    }
+
+    const transactionId =
+      payload.providerTransactionId || donation.transactionId;
+
+    if (!transactionId) {
+      throw new ApiError(
+        "Transaction ID missing",
+        400,
+        "TRANSACTION_ID_MISSING",
+      );
+    }
+
+    const strategy = new PayPalProvider();
+
+    const verifyResult = await strategy.verify({
+      donationId: donation._id.toString(),
+      providerTransactionId: transactionId,
+    });
+
+    if (!verifyResult.success) {
+      donation.status = DonationStatus.FAILED;
+      await donation.save();
+      throw new ApiError(
+        "Payment verification failed",
+        400,
+        "PAYMENT_VERIFICATION_FAILED",
+      );
+    }
+
+    // 🔥 Start transaction
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Mark as completed
+      donation.status = DonationStatus.COMPLETED;
+      donation.captureDetails = verifyResult.rawResponse;
+      donation.transactionId = verifyResult.providerTransactionId;
+      donation.paypalOrderId = verifyResult.providerTransactionId;
+
+      await donation.save({ session });
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        message: "Payment verified successfully",
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
   }
-
-  if (donation.donor.toString() !== userId) {
-    throw new ApiError("Unauthorized", 403, "UNAUTHORIZED");
-  }
-
-  if (donation.status === DonationStatus.COMPLETED) {
-    return { success: true, message: "Payment already verified" };
-  }
-
-  const transactionId =
-    payload.providerTransactionId || donation.transactionId;
-
-  if (!transactionId) {
-    throw new ApiError("Transaction ID missing", 400, "TRANSACTION_ID_MISSING");
-  }
-
-  const strategy = PaymentFactory.create(donation.method);
-
-  const verifyResult = await strategy.verify({
-    donationId: donation._id.toString(),
-    providerTransactionId: transactionId,
-  });
-
-  if (!verifyResult.success) {
-    donation.status = DonationStatus.FAILED;
-    await donation.save();
-    throw new ApiError(
-      "Payment verification failed",
-      400,
-      "PAYMENT_VERIFICATION_FAILED"
-    );
-  }
-
-  // 🔥 Start transaction
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    // Mark as completed
-    donation.status = DonationStatus.COMPLETED;
-    donation.captureDetails = verifyResult.rawResponse;
-    donation.paymentVerifiedAt = new Date();
-    donation.transactionId = verifyResult.providerTransactionId;
-
-    // 🔥 Calculate platform fee here
-    const platformFeePercentage = 0.03; // example 3%
-    const platformFee = donation.amount * platformFeePercentage;
-    const netAmount = donation.amount - platformFee;
-
-    donation.platformFee = platformFee;
-    donation.netAmount = netAmount;
-
-    await donation.save({ session });
-
-    await session.commitTransaction();
-
-    return {
-      success: true,
-      message: "Payment verified successfully",
-    };
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
-}
 }
 
 export const paymentService = new PaymentService();

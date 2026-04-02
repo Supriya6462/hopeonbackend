@@ -10,12 +10,11 @@ interface CreateDonationDTO {
   method: PaymentProvider;
   donorEmail: string;
   transactionId?: string;
+  isAnonymous?: boolean;
+  paypalOrderId?: string;
   payerEmail?: string;
   payerName?: string;
   payerCountry?: string;
-  cryptoCurrency?: "ETH" | "USDT" | "BTC";
-  transactionHash?: string;
-  network?: string;
 }
 
 // interface UpdateDonationPaymentDetails {
@@ -40,7 +39,17 @@ interface CampaignDonationFilters {
   limit?: number;
 }
 
+type DonationLifecycleStatus = "PENDING" | "COMPLETED" | "FAILED";
+
 export class DonationService {
+  private isCampaignApproved(campaign: { status?: string }) {
+    return campaign.status === "active" || campaign.status === "expired";
+  }
+
+  private isCampaignClosed(campaign: { status?: string }) {
+    return campaign.status === "expired";
+  }
+
   // Create donation
   async createDonation(donorId: string, donationData: CreateDonationDTO) {
     // Validate required fields
@@ -91,7 +100,7 @@ export class DonationService {
       throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
     }
 
-    if (!campaignDoc.isApproved) {
+    if (!this.isCampaignApproved(campaignDoc)) {
       throw new ApiError(
         "Campaign is not approved for donations",
         400,
@@ -99,7 +108,7 @@ export class DonationService {
       );
     }
 
-    if (campaignDoc.isClosed) {
+    if (this.isCampaignClosed(campaignDoc) || !campaignDoc.isDonationEnabled) {
       throw new ApiError(
         "Campaign is closed and no longer accepting donations",
         400,
@@ -113,14 +122,16 @@ export class DonationService {
       donor: donorId,
       donorEmail: donationData.donorEmail.toLowerCase().trim(),
       amount,
-      method: donationData.method,
-      transactionId: donationData.transactionId,
+      method: "paypal",
+      isAnonymous: donationData.isAnonymous || false,
+      transactionId:
+        donationData.transactionId ||
+        donationData.paypalOrderId ||
+        `pending_${new mongoose.Types.ObjectId().toString()}`,
+      paypalOrderId: donationData.paypalOrderId,
       payerEmail: donationData.payerEmail,
       payerName: donationData.payerName,
       payerCountry: donationData.payerCountry,
-      cryptoCurrency: donationData.cryptoCurrency,
-      transactionHash: donationData.transactionHash,
-      network: donationData.network,
       status: DonationStatus.PENDING,
     });
 
@@ -199,7 +210,10 @@ export class DonationService {
   //   }
   // }
 
-  async updateDonationStatus(donationId: string, status: DonationStatus) {
+  async updateDonationStatus(
+    donationId: string,
+    status: DonationLifecycleStatus,
+  ) {
     const session = await mongoose.startSession();
     session.startTransaction();
 
@@ -225,30 +239,6 @@ export class DonationService {
        * If donation becomes COMPLETED for the first time,
        * calculate platform fee and net amount.
        */
-      if (
-        status === DonationStatus.COMPLETED &&
-        previousStatus !== DonationStatus.COMPLETED
-      ) {
-        const platformFeePercentage = 0.05; // 5%
-        const platformFee = donation.amount * platformFeePercentage;
-        const netAmount = donation.amount - platformFee;
-
-        donation.platformFee = platformFee;
-        donation.netAmount = netAmount;
-      }
-
-      /**
-       * If donation was completed and is now FAILED,
-       * reset financial fields.
-       */
-      if (
-        status === DonationStatus.FAILED &&
-        previousStatus === DonationStatus.COMPLETED
-      ) {
-        donation.platformFee = 0;
-        donation.netAmount = 0;
-      }
-
       await donation.save({ session });
 
       await session.commitTransaction();
