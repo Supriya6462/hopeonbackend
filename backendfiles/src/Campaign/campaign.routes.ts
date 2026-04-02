@@ -12,14 +12,29 @@ import {
   updateCampaign,
   approveCampaign,
   closeCampaign,
-  deleteCampaign
+  deleteCampaign,
 } from "./campaign.controller.js";
+import {
+  validateBody,
+  validateParams,
+  validateQuery,
+} from "../validation/validate.js";
+import {
+  campaignIdParamSchema,
+  campaignQuerySchema,
+  createCampaignSchema,
+  updateCampaignSchema,
+} from "../validation/campaign.validation.js";
 
 const router = Router();
 
 // Public routes - No authentication required
-router.get("/allcampaignlist", getCampaigns);
-router.get("/:id", getCampaignById);
+router.get(
+  "/allcampaignlist",
+  validateQuery(campaignQuerySchema),
+  getCampaigns,
+);
+router.get("/:id", validateParams(campaignIdParamSchema), getCampaignById);
 
 // Organizer routes - Requires authentication and organizer role
 router.post(
@@ -27,7 +42,8 @@ router.post(
   authenticate,
   authorize(Role.ORGANIZER),
   requireApprovedOrganizer,
-  createCampaign
+  validateBody(createCampaignSchema),
+  createCampaign,
 );
 
 // Organizer/Admin routes - Update campaign
@@ -35,7 +51,9 @@ router.put(
   "/:id",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  updateCampaign
+  validateParams(campaignIdParamSchema),
+  validateBody(updateCampaignSchema),
+  updateCampaign,
 );
 
 // Admin only routes
@@ -43,7 +61,8 @@ router.patch(
   "/:id/approve",
   authenticate,
   authorize(Role.ADMIN),
-  approveCampaign
+  validateParams(campaignIdParamSchema),
+  approveCampaign,
 );
 
 // Organizer/Admin routes - Close and delete
@@ -51,14 +70,16 @@ router.patch(
   "/:id/close",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  closeCampaign
+  validateParams(campaignIdParamSchema),
+  closeCampaign,
 );
 
 router.delete(
   "/:id",
   authenticate,
   authorize(Role.ORGANIZER, Role.ADMIN),
-  deleteCampaign
+  validateParams(campaignIdParamSchema),
+  deleteCampaign,
 );
 
 export default router;
