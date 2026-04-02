@@ -1,5 +1,6 @@
 import connectDB from "./dbconnection.js";
 import express, { Request, Response, NextFunction } from "express";
+import path from "node:path";
 import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
@@ -85,6 +86,11 @@ app.use(
 // Body parsers
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Serve local uploads
+const uploadDirName = process.env.UPLOAD_DIR || "uploads";
+const uploadDirPath = path.resolve(process.cwd(), uploadDirName);
+app.use(`/${uploadDirName}`, express.static(uploadDirPath));
 
 // Custom NoSQL injection sanitization (Express 5 compatible)
 const sanitizeObject = (obj: any): any => {

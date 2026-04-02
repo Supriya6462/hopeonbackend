@@ -9,7 +9,7 @@ import {
   WithdrawalStatus,
 } from "../types/enums.js";
 import mongoose from "mongoose";
-import { uploadToS3 } from "../utils/s3Upload.util.js";
+import { uploadLocalFile } from "../utils/localUpload.util.js";
 import { ApiError } from "../utils/ApiError.js";
 import { mailService } from "../mail/mail.service.js";
 
@@ -266,7 +266,7 @@ export class OrganizerService {
     for (const field of singleDocFields) {
       if (files[field]?.[0]) {
         const file = files[field]![0];
-        const result = await uploadToS3(
+        const result = await uploadLocalFile(
           file.buffer,
           `${uploadFolder}/${field}`,
           file.originalname,
@@ -284,7 +284,7 @@ export class OrganizerService {
     if (files.additionalDocuments?.length) {
       documents.additionalDocuments = [];
       for (const file of files.additionalDocuments) {
-        const result = await uploadToS3(
+        const result = await uploadLocalFile(
           file.buffer,
           `${uploadFolder}/additional`,
           file.originalname,

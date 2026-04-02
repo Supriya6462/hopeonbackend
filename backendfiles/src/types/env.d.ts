@@ -8,7 +8,6 @@ declare namespace NodeJS {
     JWT_REFRESH_SECRET: string;
     REFRESH_TOKEN_EXP?: string;
 
-
     EMAIL_HOST: string;
     EMAIL_PORT?: string;
     EMAIL_USER: string;
@@ -18,11 +17,6 @@ declare namespace NodeJS {
     FRONTEND_URL?: string;
     PORT?: string;
     NODE_ENV?: "development" | "production" | "test";
-
-    AWS_REGION?: string;
-    AWS_ACCESS_KEY_ID?: string;
-    AWS_SECRET_ACCESS_KEY?: string;
-    S3_BUCKET_NAME?: string;
 
     PAYPAL_CLIENT_ID?: string;
     PAYPAL_SECRET?: string;
