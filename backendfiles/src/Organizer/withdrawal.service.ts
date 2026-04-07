@@ -13,6 +13,7 @@ import {
   NotificationEventType,
   notifyCampaignDonorsInApp,
 } from "../services/notification.service.js";
+import { recordPayoutBlock } from "../services/blockchain.service.js";
 
 interface CreateWithdrawalDTO {
   campaign: string;
@@ -869,6 +870,15 @@ export class WithdrawalService {
       withdrawal.reviewedAt = new Date();
       withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
 
+      const payoutBlock = await recordPayoutBlock({
+        amount: withdrawal.amount,
+        campaignId: withdrawal.campaign,
+        paidDate: withdrawal.completedAt.toISOString(),
+        withdrawalRequestId: withdrawal._id,
+        transactionReference: withdrawal.transactionReference || undefined,
+      });
+      withdrawal.payoutBlockchainHash = payoutBlock.hash;
+
       await withdrawal.save({ session });
 
       await session.commitTransaction();
@@ -885,6 +895,7 @@ export class WithdrawalService {
             amount: withdrawal.amount,
             status: withdrawal.status,
             transactionReference: withdrawal.transactionReference,
+            blockchainHash: withdrawal.payoutBlockchainHash,
           },
         });
 

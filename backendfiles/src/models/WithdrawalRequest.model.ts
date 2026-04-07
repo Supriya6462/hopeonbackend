@@ -127,6 +127,7 @@ const WithdrawalRequestSchema = new mongoose.Schema(
     rejectionReason: { type: String, trim: true },
     // Transaction Details
     transactionReference: { type: String, trim: true },
+    payoutBlockchainHash: { type: String, trim: true, index: true },
     completedAt: Date,
     processingFee: { type: Number, default: 0, min: 0 },
     netAmount: { type: Number },

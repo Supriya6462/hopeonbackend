@@ -17,6 +17,7 @@ import donationRoutes from "./src/Donations/donation.routes.js";
 import organizerRoutes from "./src/Organizer/organizer.routes.js";
 import withdrawalRoutes from "./src/Organizer/withdrawal.routes.js";
 import paymentRoutes from "./src/payments/payment.routes.js";
+import blockchainRoutes from "./src/Blockchain/blockchain.routes.js";
 
 dotenv.config();
 connectDB();
@@ -143,6 +144,7 @@ app.use("/api/donations", donationRoutes);
 app.use("/api/organizer", organizerRoutes);
 app.use("/api/withdrawals", withdrawalRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/blockchain", blockchainRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {

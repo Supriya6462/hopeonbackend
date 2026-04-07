@@ -10,6 +10,7 @@ import {
   createInAppNotification,
   NotificationEventType,
 } from "../services/notification.service.js";
+import { recordDonationBlock } from "../services/blockchain.service.js";
 
 export class PaymentService {
   async initiate(
@@ -186,6 +187,16 @@ export class PaymentService {
       donation.transactionId = verifyResult.providerTransactionId;
       donation.paypalOrderId = verifyResult.providerTransactionId;
 
+      const donationBlock = await recordDonationBlock({
+        donorName: donation.payerName || "Anonymous Donor",
+        amount: donation.amount,
+        campaignId: donation.campaign,
+        donationId: donation._id,
+        transactionId: donation.transactionId,
+        donatedAt: donation.createdAt.toISOString(),
+      });
+      donation.blockchainHash = donationBlock.hash;
+
       await donation.save({ session });
 
       await session.commitTransaction();
@@ -205,6 +216,7 @@ export class PaymentService {
             campaignId: donation.campaign,
             campaignTitle: campaign?.title,
             amount: donation.amount,
+            blockchainHash: donation.blockchainHash,
           },
         });
 
@@ -219,6 +231,7 @@ export class PaymentService {
               campaignId: campaign._id,
               campaignTitle: campaign.title,
               amount: donation.amount,
+              blockchainHash: donation.blockchainHash,
             },
           });
         }

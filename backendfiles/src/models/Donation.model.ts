@@ -14,6 +14,7 @@ export interface IDonation extends Document {
   payerName?: string | null;
   payerCountry?: string | null;
   captureDetails?: any | null;
+  blockchainHash?: string | null;
   status: "COMPLETED" | "PENDING" | "FAILED";
   createdAt: Date;
   updatedAt: Date;
@@ -56,6 +57,7 @@ const DonationSchema = new mongoose.Schema(
     payerEmail: { type: String, lowercase: true, trim: true },
     payerName: String,
     payerCountry: String,
+    blockchainHash: { type: String, trim: true, index: true },
     status: {
       type: String,
       enum: ["COMPLETED", "PENDING", "FAILED"],
