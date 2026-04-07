@@ -39,13 +39,17 @@ const emailWrapper = (content: string) => `
   </html>
 `;
 
-export const otpTemplate = (name: string, otp: string, purpose: 'register' | 'reset') => {
+export const otpTemplate = (
+  name: string,
+  otp: string,
+  purpose: "register" | "reset",
+) => {
   const content = `
     <h2>Hello ${name}! 👋</h2>
     <p>${
-      purpose === 'register'
-        ? 'Thank you for registering with Hopeon! To complete your registration, please verify your email address.'
-        : 'We received a request to reset your password. Use the OTP below to proceed.'
+      purpose === "register"
+        ? "Thank you for registering with Hopeon! To complete your registration, please verify your email address."
+        : "We received a request to reset your password. Use the OTP below to proceed."
     }</p>
     
     <div class="otp-box">
@@ -70,7 +74,10 @@ export const otpTemplate = (name: string, otp: string, purpose: 'register' | 're
   return emailWrapper(content);
 };
 
-export const organizerApplicationSubmittedTemplate = (name: string, organizationName: string) => {
+export const organizerApplicationSubmittedTemplate = (
+  name: string,
+  organizationName: string,
+) => {
   const content = `
     <h2>Hello ${name}! 👋</h2>
     <p>Thank you for submitting your organizer application for <strong>${organizationName}</strong>.</p>
@@ -101,7 +108,10 @@ export const organizerApplicationSubmittedTemplate = (name: string, organization
   return emailWrapper(content);
 };
 
-export const organizerApplicationApprovedTemplate = (name: string, organizationName: string) => {
+export const organizerApplicationApprovedTemplate = (
+  name: string,
+  organizationName: string,
+) => {
   const content = `
     <h2>Congratulations ${name}! 🎉</h2>
     <p>We're excited to inform you that your organizer application for <strong>${organizationName}</strong> has been approved!</p>
@@ -134,9 +144,9 @@ export const organizerApplicationApprovedTemplate = (name: string, organizationN
 };
 
 export const organizerApplicationRejectedTemplate = (
-  name: string, 
-  organizationName: string, 
-  rejectionReason: string
+  name: string,
+  organizationName: string,
+  rejectionReason: string,
 ) => {
   const content = `
     <h2>Hello ${name},</h2>
@@ -169,5 +179,151 @@ export const organizerApplicationRejectedTemplate = (
       <strong>Hopeon Team</strong>
     </p>
   `;
+  return emailWrapper(content);
+};
+
+const formatMoney = (amount: number) => `$${Number(amount || 0).toFixed(2)}`;
+
+export const withdrawalRequestSubmittedTemplate = (
+  name: string,
+  campaignTitle: string,
+  withdrawalRequestId: string,
+  amount: number,
+  submittedAt?: Date,
+) => {
+  const content = `
+    <h2>Hello ${name}! </h2>
+    <p>Your withdrawal request has been received and is pending review.</p>
+
+    <div class="info-box">
+      <h3 style="margin-top: 0;">Request Details</h3>
+      <p><strong>Campaign:</strong> ${campaignTitle}</p>
+      <p><strong>Request ID:</strong> ${withdrawalRequestId}</p>
+      <p><strong>Amount:</strong> ${formatMoney(amount)}</p>
+      <p><strong>Status:</strong> Pending Review</p>
+      <p><strong>Submitted:</strong> ${new Date(submittedAt || Date.now()).toLocaleString()}</p>
+    </div>
+
+    <div class="warning-box">
+      <strong>Expected timeline</strong><br>
+      Review usually completes within 2-5 business days.
+    </div>
+
+    <p style="margin-top: 30px;">
+      Best regards,<br>
+      <strong>Hopeon Team</strong>
+    </p>
+  `;
+
+  return emailWrapper(content);
+};
+
+export const withdrawalStatusTemplate = ({
+  name,
+  campaignTitle,
+  status,
+  amount,
+  reviewNotes,
+  rejectionReason,
+  transactionReference,
+}: {
+  name: string;
+  campaignTitle: string;
+  status: "under_review" | "approved" | "rejected" | "completed";
+  amount: number;
+  reviewNotes?: string;
+  rejectionReason?: string;
+  transactionReference?: string;
+}) => {
+  let statusTitle = "Withdrawal Status Update";
+  let statusBox = "info-box";
+  let details = "";
+
+  if (status === "under_review") {
+    statusTitle = "Withdrawal Under Review";
+    details = `<p>Your request is currently under review by our admin team.</p>`;
+  }
+
+  if (status === "approved") {
+    statusTitle = "Withdrawal Approved";
+    statusBox = "success-box";
+    details = `<p>Your withdrawal request was approved and is now scheduled for payout.</p>`;
+  }
+
+  if (status === "rejected") {
+    statusTitle = "Withdrawal Rejected";
+    statusBox = "error-box";
+    details = `<p>Your withdrawal request was rejected.</p>
+      ${rejectionReason ? `<p><strong>Reason:</strong> ${rejectionReason}</p>` : ""}`;
+  }
+
+  if (status === "completed") {
+    statusTitle = "Withdrawal Completed";
+    statusBox = "success-box";
+    details = `<p>Your withdrawal has been processed successfully.</p>
+      ${transactionReference ? `<p><strong>Transaction Reference:</strong> ${transactionReference}</p>` : ""}`;
+  }
+
+  const content = `
+    <h2>Hello ${name}!</h2>
+
+    <div class="${statusBox}">
+      <h3 style="margin-top: 0;">${statusTitle}</h3>
+      ${details}
+    </div>
+
+    <div class="info-box">
+      <p><strong>Campaign:</strong> ${campaignTitle}</p>
+      <p><strong>Amount:</strong> ${formatMoney(amount)}</p>
+      <p><strong>Status:</strong> ${status.replace("_", " ")}</p>
+      ${reviewNotes ? `<p><strong>Admin Notes:</strong> ${reviewNotes}</p>` : ""}
+    </div>
+
+    <p style="margin-top: 30px;">
+      Best regards,<br>
+      <strong>Hopeon Team</strong>
+    </p>
+  `;
+
+  return emailWrapper(content);
+};
+
+export const donorCampaignPayoutUpdateTemplate = ({
+  name,
+  campaignTitle,
+  status,
+  amount,
+  eventDate,
+  transferReferenceMasked,
+}: {
+  name: string;
+  campaignTitle: string;
+  status: "scheduled" | "completed";
+  amount: number;
+  eventDate?: Date;
+  transferReferenceMasked?: string;
+}) => {
+  const isCompleted = status === "completed";
+
+  const content = `
+    <h2>Hello ${name || "Supporter"}!</h2>
+    <p>Thank you for supporting <strong>${campaignTitle}</strong>. Here is your latest transparency update.</p>
+
+    <div class="${isCompleted ? "success-box" : "info-box"}">
+      <h3 style="margin-top: 0;">Campaign Fund Update</h3>
+      <p><strong>Status:</strong> ${isCompleted ? "Paid Out" : "Scheduled"}</p>
+      <p><strong>Amount:</strong> ${formatMoney(amount)}</p>
+      <p><strong>Date:</strong> ${new Date(eventDate || Date.now()).toLocaleDateString()}</p>
+      ${transferReferenceMasked ? `<p><strong>Transfer Reference:</strong> ${transferReferenceMasked}</p>` : ""}
+    </div>
+
+    <p>Sensitive bank details are never shared publicly for privacy and security.</p>
+
+    <p style="margin-top: 30px;">
+      Best regards,<br>
+      <strong>Hopeon Team</strong>
+    </p>
+  `;
+
   return emailWrapper(content);
 };

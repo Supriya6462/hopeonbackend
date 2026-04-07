@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { NextFunction, Request, Response } from "express";
 import {
   authenticate,
   authorize,
@@ -15,11 +16,41 @@ import {
   createWithdrawalSchema,
   markPaidSchema,
   rejectWithdrawalSchema,
+  verifyWithdrawalDocumentSchema,
+  withdrawalCampaignParamSchema,
   withdrawalIdParamSchema,
   withdrawalListQuerySchema,
 } from "../validation/withdrawal.validation.js";
+import {
+  applyFileMetadataForResponse,
+  documentUpload,
+  handleDocumentUploadError,
+} from "../config/multer.js";
 
 const router = Router();
+
+const singleWithdrawalDocumentUpload = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  documentUpload.single("document")(req, res, (error) => {
+    if (error) {
+      return handleDocumentUploadError(error, res);
+    }
+
+    applyFileMetadataForResponse(req);
+    return next();
+  });
+};
+
+router.post(
+  "/upload-document",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  singleWithdrawalDocumentUpload,
+  withdrawalController.uploadWithdrawalDocument.bind(withdrawalController),
+);
 
 // Organizer - Create withdrawal request
 router.post(
@@ -37,6 +68,14 @@ router.get(
   authenticate,
   authorize(Role.ORGANIZER),
   withdrawalController.getOrganizerWithdrawals.bind(withdrawalController),
+);
+
+router.get(
+  "/available-balance/:campaignId",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  validateParams(withdrawalCampaignParamSchema),
+  withdrawalController.getAvailableBalance.bind(withdrawalController),
 );
 
 // Admin - Get all withdrawal requests
@@ -84,6 +123,15 @@ router.patch(
   validateParams(withdrawalIdParamSchema),
   validateBody(markPaidSchema),
   withdrawalController.markAsPaid.bind(withdrawalController),
+);
+
+router.patch(
+  "/:id/verify-document",
+  authenticate,
+  authorize(Role.ADMIN),
+  validateParams(withdrawalIdParamSchema),
+  validateBody(verifyWithdrawalDocumentSchema),
+  withdrawalController.verifyWithdrawalDocument.bind(withdrawalController),
 );
 
 export default router;

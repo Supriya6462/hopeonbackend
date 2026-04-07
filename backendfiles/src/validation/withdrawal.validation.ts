@@ -39,6 +39,10 @@ export const withdrawalIdParamSchema = z.object({
   id: objectIdSchema,
 });
 
+export const withdrawalCampaignParamSchema = z.object({
+  campaignId: objectIdSchema,
+});
+
 export const createWithdrawalSchema = z
   .object({
     campaign: objectIdSchema,
@@ -70,4 +74,14 @@ export const markPaidSchema = z.object({
 
 export const withdrawalListQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(WithdrawalStatus).optional(),
+});
+
+export const verifyWithdrawalDocumentSchema = z.object({
+  documentType: z.enum([
+    "governmentId",
+    "bankProof",
+    "addressProof",
+    "taxDocument",
+  ]),
+  verified: z.boolean(),
 });

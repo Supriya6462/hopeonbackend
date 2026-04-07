@@ -13,6 +13,10 @@ export const NotificationEventType = {
   CAMPAIGN_APPROVED: "campaign_approved",
   DONATION_COMPLETED: "donation_completed",
   DONATION_RECEIVED: "donation_received",
+  WITHDRAWAL_REQUESTED: "withdrawal_requested",
+  WITHDRAWAL_REQUEST_PENDING_REVIEW: "withdrawal_request_pending_review",
+  WITHDRAWAL_APPROVED: "withdrawal_approved",
+  WITHDRAWAL_REJECTED: "withdrawal_rejected",
   CAMPAIGN_WITHDRAWAL_COMPLETED: "campaign_withdrawal_completed",
   CAMPAIGN_WITHDRAWAL_SCHEDULED: "campaign_withdrawal_scheduled",
 } as const;

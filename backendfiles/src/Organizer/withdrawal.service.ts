@@ -4,6 +4,10 @@ import { WithdrawalStatus, Role, DonationStatus } from "../types/enums.js";
 import { ApiError } from "../utils/ApiError.js";
 import mongoose from "mongoose";
 import { Donation } from "../models/Donation.model.js";
+import OrganizerProfile from "../models/OrganizerProfile.model.js";
+import { User } from "../models/User.model.js";
+import ActivityLog from "../models/ActivityLog.js";
+import { mailService } from "../mail/mail.service.js";
 import {
   createInAppNotification,
   NotificationEventType,
@@ -55,9 +59,121 @@ interface WithdrawalFilters {
   limit?: number;
 }
 
+type WithdrawalDocumentType =
+  | "governmentId"
+  | "bankProof"
+  | "addressProof"
+  | "taxDocument";
+
+interface UploadedDocumentFile extends Express.Multer.File {
+  location?: string;
+  key?: string;
+}
+
 export class WithdrawalService {
   private isCampaignApproved(campaign: { status?: string }) {
     return campaign.status === "active" || campaign.status === "expired";
+  }
+
+  private maskTransactionReference(reference?: string | null) {
+    if (!reference || typeof reference !== "string") {
+      return null;
+    }
+
+    const trimmed = reference.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed.length <= 4) {
+      return "****";
+    }
+
+    return `${"*".repeat(Math.max(4, trimmed.length - 4))}${trimmed.slice(-4)}`;
+  }
+
+  private async createAuditLog({
+    user,
+    activityType,
+    description,
+    metadata,
+    relatedEntity,
+  }: {
+    user: string | mongoose.Types.ObjectId;
+    activityType: string;
+    description: string;
+    metadata?: Record<string, unknown>;
+    relatedEntity?: { entityType: string; entityId: mongoose.Types.ObjectId };
+  }) {
+    try {
+      await ActivityLog.create({
+        user,
+        activityType,
+        description,
+        metadata: metadata || {},
+        relatedEntity: relatedEntity || undefined,
+      });
+    } catch (error) {
+      console.error("Failed to create activity log:", error);
+    }
+  }
+
+  private async notifyDonorsByEmail({
+    campaignId,
+    campaignTitle,
+    status,
+    amount,
+    eventDate,
+    transferReferenceMasked,
+  }: {
+    campaignId: mongoose.Types.ObjectId;
+    campaignTitle: string;
+    status: "scheduled" | "completed";
+    amount: number;
+    eventDate: Date;
+    transferReferenceMasked?: string | null;
+  }) {
+    const donorIds = await Donation.distinct("donor", {
+      campaign: campaignId,
+      status: DonationStatus.COMPLETED,
+    });
+
+    if (!donorIds.length) {
+      return 0;
+    }
+
+    const donors = await User.find({ _id: { $in: donorIds } }).select(
+      "name email",
+    );
+
+    const emailResults = await Promise.all(
+      donors.map(async (donor) => {
+        if (!donor.email) {
+          return false;
+        }
+
+        try {
+          await mailService.sendDonorCampaignPayoutUpdateEmail({
+            to: donor.email,
+            name: donor.name || "Supporter",
+            campaignTitle,
+            status,
+            amount,
+            eventDate,
+            transferReferenceMasked: transferReferenceMasked || undefined,
+          });
+          return true;
+        } catch (error) {
+          console.error(
+            `Failed to send donor payout update email to ${donor.email}:`,
+            error,
+          );
+          return false;
+        }
+      }),
+    );
+
+    return emailResults.filter(Boolean).length;
   }
 
   // Get total donations (net amount) for a campaign
@@ -176,6 +292,30 @@ export class WithdrawalService {
       throw new ApiError("Invalid campaign ID", 400, "INVALID_CAMPAIGN_ID");
     }
 
+    const organizerProfile = await OrganizerProfile.findOne({
+      organizer: organizerId,
+    });
+
+    if (!organizerProfile) {
+      throw new ApiError(
+        "Organizer profile not found. Complete your KYC and bank profile first.",
+        400,
+        "ORGANIZER_PROFILE_REQUIRED",
+      );
+    }
+
+    if (organizerProfile.verificationStatus !== "verified") {
+      throw new ApiError(
+        "Organizer profile is not verified yet.",
+        400,
+        "ORGANIZER_PROFILE_NOT_VERIFIED",
+        {
+          verificationStatus: organizerProfile.verificationStatus,
+          rejectionReason: organizerProfile.rejectionReason,
+        },
+      );
+    }
+
     // Verify campaign ownership
     const campaignDoc = await Campaign.findById(withdrawalData.campaign);
     if (!campaignDoc) {
@@ -204,9 +344,11 @@ export class WithdrawalService {
     //     `Requested amount (${amountRequested}) exceeds available funds (${campaignDoc.raised})`
     //   );
     // }
-    const availableBalance = await this.getCampaignAvailableBalance(
-      withdrawalData.campaign,
-    );
+    const [totalRaised, totalWithdrawn, availableBalance] = await Promise.all([
+      this.getCampaignTotalDonations(withdrawalData.campaign),
+      this.getCampaignTotalWithdrawn(withdrawalData.campaign),
+      this.getCampaignAvailableBalance(withdrawalData.campaign),
+    ]);
 
     if (amountRequested > availableBalance) {
       throw new ApiError(
@@ -232,17 +374,92 @@ export class WithdrawalService {
 
     const withdrawal = new WithdrawalRequest({
       organizer: organizerId,
+      organizerProfile: organizerProfile._id,
       campaign: withdrawalData.campaign,
       amount: amountRequested,
-      availableBalanceSnapshot: availableBalance, // Record the available balance at time of request
-      bankDetails: withdrawalData.bankDetails,
-      documents: withdrawalData.documents,
-      kycInfo: withdrawalData.kycInfo,
+      availableBalanceSnapshot: availableBalance,
+      totalRaisedSnapshot: totalRaised,
+      totalWithdrawnSnapshot: totalWithdrawn,
+      bankDetails: (organizerProfile as any).getDecryptedBankDetails(),
+      documents: organizerProfile.documents,
+      kycInfo: organizerProfile.kycInfo,
       reviewNotes: withdrawalData.reason,
       status: WithdrawalStatus.REQUESTED,
     });
 
     await withdrawal.save();
+
+    await this.createAuditLog({
+      user: organizerId,
+      activityType: "withdrawal_requested",
+      description: `Withdrawal request submitted for campaign ${campaignDoc.title}`,
+      metadata: {
+        campaignId: campaignDoc._id,
+        withdrawalRequestId: withdrawal._id,
+        amount: withdrawal.amount,
+      },
+      relatedEntity: {
+        entityType: "WithdrawalRequest",
+        entityId: withdrawal._id,
+      },
+    });
+
+    try {
+      await createInAppNotification({
+        recipient: organizerId,
+        eventType: NotificationEventType.WITHDRAWAL_REQUESTED,
+        title: "Withdrawal Request Submitted",
+        message: `Your withdrawal request for ${campaignDoc.title} is pending review.`,
+        payload: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: campaignDoc._id,
+          amount: withdrawal.amount,
+          status: withdrawal.status,
+        },
+      });
+
+      const admins = await User.find({ role: Role.ADMIN }).select("_id");
+      if (admins.length) {
+        await Promise.all(
+          admins.map((admin) =>
+            createInAppNotification({
+              recipient: admin._id,
+              eventType:
+                NotificationEventType.WITHDRAWAL_REQUEST_PENDING_REVIEW,
+              title: "New Withdrawal Request",
+              message: `A withdrawal request needs review for ${campaignDoc.title}.`,
+              payload: {
+                withdrawalRequestId: withdrawal._id,
+                campaignId: campaignDoc._id,
+                amount: withdrawal.amount,
+                status: withdrawal.status,
+              },
+            }),
+          ),
+        );
+      }
+    } catch (notificationError) {
+      console.error(
+        "Failed to create withdrawal in-app notifications:",
+        notificationError,
+      );
+    }
+
+    try {
+      const organizer = await User.findById(organizerId).select("name email");
+      if (organizer?.email) {
+        await mailService.sendWithdrawalRequestEmail({
+          to: organizer.email,
+          name: organizer.name || "Organizer",
+          campaignTitle: campaignDoc.title,
+          withdrawalRequestId: withdrawal._id.toString(),
+          amount: withdrawal.amount,
+          submittedAt: withdrawal.createdAt,
+        });
+      }
+    } catch (emailError) {
+      console.error("Failed to send withdrawal request email:", emailError);
+    }
 
     return withdrawal;
   }
@@ -369,12 +586,24 @@ export class WithdrawalService {
 
     withdrawal.status = WithdrawalStatus.APPROVED;
     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+    withdrawal.reviewedAt = new Date();
     await withdrawal.save();
 
     try {
+      const populated = await WithdrawalRequest.findById(withdrawal._id)
+        .populate("organizer", "name email")
+        .populate("campaign", "title");
+
+      if (!populated || !populated.campaign || !populated.organizer) {
+        return withdrawal;
+      }
+
+      const campaignTitle =
+        (populated.campaign as any).title || "this campaign";
+
       await createInAppNotification({
         recipient: withdrawal.organizer,
-        eventType: "withdrawal_approved",
+        eventType: NotificationEventType.WITHDRAWAL_APPROVED,
         title: "Withdrawal Approved",
         message: "Your withdrawal request has been approved and scheduled.",
         payload: {
@@ -388,13 +617,49 @@ export class WithdrawalService {
       const campaign = await Campaign.findById(withdrawal.campaign).select(
         "title",
       );
-      await notifyCampaignDonorsInApp({
+      const donorInAppResult = await notifyCampaignDonorsInApp({
         campaignId: withdrawal.campaign.toString(),
         withdrawalRequestId: withdrawal._id.toString(),
-        campaignTitle: campaign?.title || "this campaign",
+        campaignTitle: campaign?.title || campaignTitle,
         status: "scheduled",
         amount: withdrawal.amount,
         eventDate: new Date(),
+      });
+
+      const donorEmailCount = await this.notifyDonorsByEmail({
+        campaignId: withdrawal.campaign,
+        campaignTitle,
+        status: "scheduled",
+        amount: withdrawal.amount,
+        eventDate: withdrawal.reviewedAt || new Date(),
+      });
+
+      const organizerEmail = (populated.organizer as any).email;
+      const organizerName = (populated.organizer as any).name || "Organizer";
+      if (organizerEmail) {
+        await mailService.sendWithdrawalStatusEmail({
+          to: organizerEmail,
+          name: organizerName,
+          campaignTitle,
+          status: "approved",
+          amount: withdrawal.amount,
+        });
+      }
+
+      await this.createAuditLog({
+        user: adminId,
+        activityType: "withdrawal_approved",
+        description: `Withdrawal approved for campaign ${campaignTitle}`,
+        metadata: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: withdrawal.campaign,
+          donorEmailCount,
+          donorInAppCount: donorInAppResult.notifiedCount,
+        },
+        relatedEntity: {
+          entityType: "WithdrawalRequest",
+          entityId: withdrawal._id,
+        },
       });
     } catch (notifyError) {
       console.error(
@@ -448,7 +713,7 @@ export class WithdrawalService {
     try {
       await createInAppNotification({
         recipient: withdrawal.organizer,
-        eventType: "withdrawal_rejected",
+        eventType: NotificationEventType.WITHDRAWAL_REJECTED,
         title: "Withdrawal Rejected",
         message:
           withdrawal.rejectionReason ||
@@ -459,6 +724,39 @@ export class WithdrawalService {
           amount: withdrawal.amount,
           status: withdrawal.status,
           rejectionReason: withdrawal.rejectionReason,
+        },
+      });
+
+      const populated = await WithdrawalRequest.findById(withdrawal._id)
+        .populate("organizer", "name email")
+        .populate("campaign", "title");
+
+      if (populated?.organizer && populated?.campaign) {
+        const organizerEmail = (populated.organizer as any).email;
+        if (organizerEmail) {
+          await mailService.sendWithdrawalStatusEmail({
+            to: organizerEmail,
+            name: (populated.organizer as any).name || "Organizer",
+            campaignTitle: (populated.campaign as any).title || "Campaign",
+            status: "rejected",
+            amount: withdrawal.amount,
+            rejectionReason: withdrawal.rejectionReason || undefined,
+          });
+        }
+      }
+
+      await this.createAuditLog({
+        user: adminId,
+        activityType: "withdrawal_rejected",
+        description: `Withdrawal rejected for request ${withdrawal._id.toString()}`,
+        metadata: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: withdrawal.campaign,
+          rejectionReason: withdrawal.rejectionReason,
+        },
+        relatedEntity: {
+          entityType: "WithdrawalRequest",
+          entityId: withdrawal._id,
         },
       });
     } catch (notifyError) {
@@ -593,13 +891,55 @@ export class WithdrawalService {
         const campaign = await Campaign.findById(withdrawal.campaign).select(
           "title",
         );
-        await notifyCampaignDonorsInApp({
+        const campaignTitle = campaign?.title || "this campaign";
+        const donorInAppResult = await notifyCampaignDonorsInApp({
           campaignId: withdrawal.campaign.toString(),
           withdrawalRequestId: withdrawal._id.toString(),
-          campaignTitle: campaign?.title || "this campaign",
+          campaignTitle,
           status: "completed",
           amount: withdrawal.amount,
           eventDate: withdrawal.completedAt || new Date(),
+        });
+
+        const donorEmailCount = await this.notifyDonorsByEmail({
+          campaignId: withdrawal.campaign,
+          campaignTitle,
+          status: "completed",
+          amount: withdrawal.amount,
+          eventDate: withdrawal.completedAt || new Date(),
+          transferReferenceMasked: this.maskTransactionReference(
+            withdrawal.transactionReference,
+          ),
+        });
+
+        const organizerUser = await User.findById(withdrawal.organizer).select(
+          "name email",
+        );
+        if (organizerUser?.email) {
+          await mailService.sendWithdrawalStatusEmail({
+            to: organizerUser.email,
+            name: organizerUser.name || "Organizer",
+            campaignTitle,
+            status: "completed",
+            amount: withdrawal.amount,
+            transactionReference: withdrawal.transactionReference,
+          });
+        }
+
+        await this.createAuditLog({
+          user: adminId,
+          activityType: "withdrawal_completed",
+          description: `Withdrawal marked paid for campaign ${campaignTitle}`,
+          metadata: {
+            withdrawalRequestId: withdrawal._id,
+            campaignId: withdrawal.campaign,
+            donorEmailCount,
+            donorInAppCount: donorInAppResult.notifiedCount,
+          },
+          relatedEntity: {
+            entityType: "WithdrawalRequest",
+            entityId: withdrawal._id,
+          },
         });
       } catch (notifyError) {
         console.error("Failed to notify withdrawal paid events:", notifyError);
@@ -612,6 +952,116 @@ export class WithdrawalService {
     } finally {
       session.endSession();
     }
+  }
+
+  async uploadWithdrawalDocument(
+    file: UploadedDocumentFile | undefined,
+    documentType?: string,
+  ) {
+    if (!file) {
+      throw new ApiError("No file uploaded", 400, "WITHDRAWAL_FILE_REQUIRED");
+    }
+
+    if (!file.location || !file.key) {
+      throw new ApiError(
+        "Uploaded document metadata is missing",
+        500,
+        "WITHDRAWAL_FILE_METADATA_MISSING",
+      );
+    }
+
+    return {
+      message: "Document uploaded successfully",
+      url: file.location,
+      key: file.key,
+      documentType: documentType || null,
+    };
+  }
+
+  async getAvailableBalance(campaignId: string, organizerId: string) {
+    if (!mongoose.Types.ObjectId.isValid(campaignId)) {
+      throw new ApiError("Invalid campaign ID", 400, "INVALID_CAMPAIGN_ID");
+    }
+
+    const campaign = await Campaign.findById(campaignId);
+    if (!campaign) {
+      throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
+    }
+
+    if (campaign.owner.toString() !== organizerId) {
+      throw new ApiError(
+        "You don't own this campaign",
+        403,
+        "CAMPAIGN_ACCESS_DENIED",
+      );
+    }
+
+    const [totalRaised, totalWithdrawn, availableBalance] = await Promise.all([
+      this.getCampaignTotalDonations(campaignId),
+      this.getCampaignTotalWithdrawn(campaignId),
+      this.getCampaignAvailableBalance(campaignId),
+    ]);
+
+    return {
+      campaignId,
+      totalRaised,
+      totalWithdrawn,
+      availableBalance,
+    };
+  }
+
+  async verifyWithdrawalDocument(
+    withdrawalId: string,
+    documentType: WithdrawalDocumentType,
+    verified: boolean,
+    adminId: string,
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(adminId)) {
+      throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
+    }
+
+    const withdrawal = await WithdrawalRequest.findById(withdrawalId);
+    if (!withdrawal) {
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
+    }
+
+    if (!withdrawal.documents || !withdrawal.documents[documentType]) {
+      throw new ApiError(
+        "Document type not found in withdrawal request",
+        400,
+        "WITHDRAWAL_DOCUMENT_NOT_FOUND",
+      );
+    }
+
+    (withdrawal.documents[documentType] as any).verified = verified;
+    withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+    withdrawal.reviewedAt = new Date();
+    await withdrawal.save();
+
+    await this.createAuditLog({
+      user: adminId,
+      activityType: "withdrawal_document_verification_updated",
+      description: `Withdrawal document ${documentType} marked as ${verified ? "verified" : "unverified"}`,
+      metadata: {
+        withdrawalRequestId: withdrawal._id,
+        documentType,
+        verified,
+      },
+      relatedEntity: {
+        entityType: "WithdrawalRequest",
+        entityId: withdrawal._id,
+      },
+    });
+
+    return withdrawal;
   }
 }
 
