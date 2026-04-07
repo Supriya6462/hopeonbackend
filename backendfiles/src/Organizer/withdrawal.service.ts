@@ -58,6 +58,12 @@ interface WithdrawalFilters {
   status?: WithdrawalStatus;
   page?: number;
   limit?: number;
+  organizerId?: string;
+  campaignId?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  fromDate?: string;
+  toDate?: string;
 }
 
 type WithdrawalDocumentType =
@@ -72,8 +78,42 @@ interface UploadedDocumentFile extends Express.Multer.File {
 }
 
 export class WithdrawalService {
+  private readonly transitions: Record<string, string[]> = {
+    [WithdrawalStatus.REQUESTED]: [
+      WithdrawalStatus.UNDER_REVIEW,
+      WithdrawalStatus.APPROVED,
+      WithdrawalStatus.REJECTED,
+    ],
+    [WithdrawalStatus.UNDER_REVIEW]: [
+      WithdrawalStatus.APPROVED,
+      WithdrawalStatus.REJECTED,
+    ],
+    [WithdrawalStatus.APPROVED]: [WithdrawalStatus.PAID],
+    [WithdrawalStatus.REJECTED]: [],
+    [WithdrawalStatus.PAID]: [],
+  };
+
   private isCampaignApproved(campaign: { status?: string }) {
     return campaign.status === "active" || campaign.status === "expired";
+  }
+
+  private ensureAllowedTransition(currentStatus: string, nextStatus: string) {
+    const allowed = this.transitions[currentStatus] || [];
+    if (!allowed.includes(nextStatus)) {
+      throw new ApiError(
+        `Invalid status transition from ${currentStatus} to ${nextStatus}`,
+        400,
+        "INVALID_WITHDRAWAL_TRANSITION",
+      );
+    }
+  }
+
+  private hasRequiredDocumentsVerified(withdrawal: any) {
+    return Boolean(
+      withdrawal.documents?.governmentId?.verified &&
+      withdrawal.documents?.bankProof?.verified &&
+      withdrawal.documents?.addressProof?.verified,
+    );
   }
 
   private maskTransactionReference(reference?: string | null) {
@@ -490,6 +530,40 @@ export class WithdrawalService {
       query.status = filters.status;
     }
 
+    if (
+      filters.organizerId &&
+      mongoose.Types.ObjectId.isValid(filters.organizerId)
+    ) {
+      query.organizer = filters.organizerId;
+    }
+
+    if (
+      filters.campaignId &&
+      mongoose.Types.ObjectId.isValid(filters.campaignId)
+    ) {
+      query.campaign = filters.campaignId;
+    }
+
+    if (filters.minAmount !== undefined || filters.maxAmount !== undefined) {
+      query.amount = {};
+      if (filters.minAmount !== undefined) {
+        query.amount.$gte = Number(filters.minAmount);
+      }
+      if (filters.maxAmount !== undefined) {
+        query.amount.$lte = Number(filters.maxAmount);
+      }
+    }
+
+    if (filters.fromDate || filters.toDate) {
+      query.createdAt = {};
+      if (filters.fromDate) {
+        query.createdAt.$gte = new Date(filters.fromDate);
+      }
+      if (filters.toDate) {
+        query.createdAt.$lte = new Date(filters.toDate);
+      }
+    }
+
     // Pagination
     const page = Math.max(1, Number(filters.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(filters.limit) || 20));
@@ -577,11 +651,13 @@ export class WithdrawalService {
       );
     }
 
-    if (withdrawal.status !== WithdrawalStatus.REQUESTED) {
+    this.ensureAllowedTransition(withdrawal.status, WithdrawalStatus.APPROVED);
+
+    if (!this.hasRequiredDocumentsVerified(withdrawal)) {
       throw new ApiError(
-        "Only pending requests can be approved",
+        "All required documents must be verified before approval",
         400,
-        "INVALID_WITHDRAWAL_STATUS",
+        "WITHDRAWAL_DOCUMENTS_NOT_VERIFIED",
       );
     }
 
@@ -696,13 +772,7 @@ export class WithdrawalService {
       );
     }
 
-    if (withdrawal.status !== WithdrawalStatus.REQUESTED) {
-      throw new ApiError(
-        "Only pending requests can be rejected",
-        400,
-        "INVALID_WITHDRAWAL_STATUS",
-      );
-    }
+    this.ensureAllowedTransition(withdrawal.status, WithdrawalStatus.REJECTED);
 
     withdrawal.status = WithdrawalStatus.REJECTED;
     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
@@ -856,13 +926,7 @@ export class WithdrawalService {
         );
       }
 
-      if (withdrawal.status !== WithdrawalStatus.APPROVED) {
-        throw new ApiError(
-          "Only approved requests can be marked as paid",
-          400,
-          "INVALID_WITHDRAWAL_STATUS",
-        );
-      }
+      this.ensureAllowedTransition(withdrawal.status, WithdrawalStatus.PAID);
 
       withdrawal.status = WithdrawalStatus.PAID;
       withdrawal.completedAt = new Date();
@@ -1073,6 +1137,191 @@ export class WithdrawalService {
     });
 
     return withdrawal;
+  }
+
+  async moveToUnderReview(
+    withdrawalId: string,
+    adminId: string,
+    reviewNotes?: string,
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(adminId)) {
+      throw new ApiError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
+    }
+
+    const withdrawal = await WithdrawalRequest.findById(withdrawalId)
+      .populate("organizer", "name email")
+      .populate("campaign", "title");
+
+    if (!withdrawal) {
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
+    }
+
+    this.ensureAllowedTransition(
+      withdrawal.status,
+      WithdrawalStatus.UNDER_REVIEW,
+    );
+
+    withdrawal.status = WithdrawalStatus.UNDER_REVIEW;
+    withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
+    withdrawal.reviewedAt = new Date();
+    withdrawal.reviewNotes = reviewNotes?.trim();
+    await withdrawal.save();
+
+    const organizer = withdrawal.organizer as any;
+    const campaign = withdrawal.campaign as any;
+
+    try {
+      await createInAppNotification({
+        recipient: withdrawal.organizer,
+        eventType: NotificationEventType.WITHDRAWAL_REQUEST_PENDING_REVIEW,
+        title: "Withdrawal Under Review",
+        message: "Your withdrawal request is now under review.",
+        payload: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: withdrawal.campaign,
+          status: withdrawal.status,
+          reviewNotes: withdrawal.reviewNotes,
+        },
+      });
+
+      if (organizer?.email) {
+        await mailService.sendWithdrawalStatusEmail({
+          to: organizer.email,
+          name: organizer.name || "Organizer",
+          campaignTitle: campaign?.title || "Campaign",
+          status: "under_review",
+          amount: withdrawal.amount,
+          reviewNotes: withdrawal.reviewNotes,
+        });
+      }
+    } catch (notifyError) {
+      console.error(
+        "Failed to notify withdrawal under-review event:",
+        notifyError,
+      );
+    }
+
+    await this.createAuditLog({
+      user: adminId,
+      activityType: "withdrawal_under_review",
+      description: `Withdrawal moved to under review for request ${withdrawal._id.toString()}`,
+      metadata: {
+        withdrawalRequestId: withdrawal._id,
+        campaignId: withdrawal.campaign,
+        reviewNotes: withdrawal.reviewNotes,
+      },
+      relatedEntity: {
+        entityType: "WithdrawalRequest",
+        entityId: withdrawal._id,
+      },
+    });
+
+    return withdrawal;
+  }
+
+  async cancelWithdrawalRequest(withdrawalId: string, organizerId: string) {
+    if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(organizerId)) {
+      throw new ApiError("Invalid organizer ID", 400, "INVALID_ORGANIZER_ID");
+    }
+
+    const withdrawal = await WithdrawalRequest.findById(withdrawalId);
+    if (!withdrawal) {
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
+    }
+
+    if (withdrawal.organizer.toString() !== organizerId) {
+      throw new ApiError("Access denied", 403, "WITHDRAWAL_ACCESS_DENIED");
+    }
+
+    if (withdrawal.status !== WithdrawalStatus.REQUESTED) {
+      throw new ApiError(
+        "Only pending withdrawal requests can be cancelled",
+        400,
+        "INVALID_WITHDRAWAL_STATUS",
+      );
+    }
+
+    await withdrawal.deleteOne();
+
+    await this.createAuditLog({
+      user: organizerId,
+      activityType: "withdrawal_cancelled",
+      description: `Withdrawal request ${withdrawal._id.toString()} cancelled by organizer`,
+      metadata: {
+        withdrawalRequestId: withdrawal._id,
+        campaignId: withdrawal.campaign,
+      },
+      relatedEntity: {
+        entityType: "WithdrawalRequest",
+        entityId: withdrawal._id,
+      },
+    });
+
+    return { id: withdrawalId };
+  }
+
+  async getWithdrawalAuditLog(
+    withdrawalId: string,
+    input: { page?: number; limit?: number } = {},
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(withdrawalId)) {
+      throw new ApiError("Invalid withdrawal ID", 400, "INVALID_WITHDRAWAL_ID");
+    }
+
+    const withdrawal =
+      await WithdrawalRequest.findById(withdrawalId).select("_id");
+    if (!withdrawal) {
+      throw new ApiError(
+        "Withdrawal request not found",
+        404,
+        "WITHDRAWAL_NOT_FOUND",
+      );
+    }
+
+    const page = Math.max(1, Number(input.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(input.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const query = {
+      "relatedEntity.entityType": "WithdrawalRequest",
+      "relatedEntity.entityId": withdrawal._id,
+    };
+
+    const [activities, total] = await Promise.all([
+      ActivityLog.find(query)
+        .populate("user", "name email role")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      ActivityLog.countDocuments(query),
+    ]);
+
+    return {
+      activities,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
   }
 }
 

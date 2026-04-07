@@ -16,6 +16,7 @@ import campaignRoutes from "./src/Campaign/campaign.routes.js";
 import donationRoutes from "./src/Donations/donation.routes.js";
 import organizerRoutes from "./src/Organizer/organizer.routes.js";
 import withdrawalRoutes from "./src/Organizer/withdrawal.routes.js";
+import adminRoutes from "./src/Admin/admin.routes.js";
 import paymentRoutes from "./src/payments/payment.routes.js";
 import blockchainRoutes from "./src/Blockchain/blockchain.routes.js";
 
@@ -143,6 +144,7 @@ app.use("/api/campaigns", campaignRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/organizer", organizerRoutes);
 app.use("/api/withdrawals", withdrawalRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/blockchain", blockchainRoutes);
 

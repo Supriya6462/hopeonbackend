@@ -74,6 +74,16 @@ export const markPaidSchema = z.object({
 
 export const withdrawalListQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(WithdrawalStatus).optional(),
+  organizerId: objectIdSchema.optional(),
+  campaignId: objectIdSchema.optional(),
+  minAmount: z.coerce.number().positive().optional(),
+  maxAmount: z.coerce.number().positive().optional(),
+  fromDate: z.string().datetime().optional(),
+  toDate: z.string().datetime().optional(),
+});
+
+export const moveWithdrawalToReviewSchema = z.object({
+  reviewNotes: z.string().trim().max(1000).optional(),
 });
 
 export const verifyWithdrawalDocumentSchema = z.object({

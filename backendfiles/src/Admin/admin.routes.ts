@@ -1,0 +1,202 @@
+import { Router } from "express";
+import { authenticate, authorize } from "../middleware/auth.middleware.js";
+import { Role } from "../types/enums.js";
+import {
+  validateBody,
+  validateParams,
+  validateQuery,
+} from "../validation/validate.js";
+import {
+  adminActivitiesListQuerySchema,
+  adminApplicationIdParamSchema,
+  adminApplicationsListQuerySchema,
+  adminApproveApplicationSchema,
+  adminBulkApproveWithdrawalSchema,
+  adminBulkRejectWithdrawalSchema,
+  adminBulkUnderReviewWithdrawalSchema,
+  adminCampaignIdParamSchema,
+  adminCampaignListQuerySchema,
+  adminCompleteWithdrawalSchema,
+  adminDonationsListQuerySchema,
+  adminRejectApplicationSchema,
+  adminRejectWithdrawalSchema,
+  adminRevokeOrganizerSchema,
+  adminUnderReviewWithdrawalSchema,
+  adminUserIdParamSchema,
+  adminUserListQuerySchema,
+  adminUserStatusUpdateSchema,
+  adminWithdrawalAuditQuerySchema,
+  adminWithdrawalIdParamSchema,
+  adminWithdrawalsListQuerySchema,
+} from "../validation/admin.validation.js";
+import {
+  approveAdminApplication,
+  approveAdminWithdrawal,
+  bulkApproveAdminWithdrawals,
+  bulkMoveAdminWithdrawalsToUnderReview,
+  bulkRejectAdminWithdrawals,
+  completeAdminWithdrawal,
+  getAdminActivities,
+  getAdminApplicationDetails,
+  getAdminCampaignDetails,
+  getAdminCampaigns,
+  getAdminDashboardStats,
+  getAdminDonations,
+  getAdminUserDetails,
+  getAdminUserDonations,
+  getAdminUsers,
+  getAdminWithdrawalAuditLog,
+  getAdminWithdrawalDetails,
+  getAdminWithdrawals,
+  listAdminApplications,
+  moveAdminWithdrawalToUnderReview,
+  patchAdminUserStatus,
+  rejectAdminApplication,
+  rejectAdminWithdrawal,
+  reinstateAdminOrganizer,
+  removeAdminCampaign,
+  revokeAdminOrganizer,
+} from "./admin.controller.js";
+
+const router = Router();
+
+router.use(authenticate, authorize(Role.ADMIN));
+
+router.get("/dashboard/stats", getAdminDashboardStats);
+
+router.get("/users", validateQuery(adminUserListQuerySchema), getAdminUsers);
+router.get(
+  "/users/:userId",
+  validateParams(adminUserIdParamSchema),
+  getAdminUserDetails,
+);
+router.patch(
+  "/users/:userId/status",
+  validateParams(adminUserIdParamSchema),
+  validateBody(adminUserStatusUpdateSchema),
+  patchAdminUserStatus,
+);
+router.get(
+  "/users/:userId/donations",
+  validateParams(adminUserIdParamSchema),
+  getAdminUserDonations,
+);
+
+router.get(
+  "/campaigns",
+  validateQuery(adminCampaignListQuerySchema),
+  getAdminCampaigns,
+);
+router.get(
+  "/campaigns/:campaignId",
+  validateParams(adminCampaignIdParamSchema),
+  getAdminCampaignDetails,
+);
+router.delete(
+  "/campaigns/:campaignId",
+  validateParams(adminCampaignIdParamSchema),
+  removeAdminCampaign,
+);
+
+router.get(
+  "/donations",
+  validateQuery(adminDonationsListQuerySchema),
+  getAdminDonations,
+);
+
+router.get(
+  "/activities",
+  validateQuery(adminActivitiesListQuerySchema),
+  getAdminActivities,
+);
+
+router.get(
+  "/applications",
+  validateQuery(adminApplicationsListQuerySchema),
+  listAdminApplications,
+);
+router.get(
+  "/applications/:id",
+  validateParams(adminApplicationIdParamSchema),
+  getAdminApplicationDetails,
+);
+router.patch(
+  "/applications/:id/approve",
+  validateParams(adminApplicationIdParamSchema),
+  validateBody(adminApproveApplicationSchema),
+  approveAdminApplication,
+);
+router.patch(
+  "/applications/:id/reject",
+  validateParams(adminApplicationIdParamSchema),
+  validateBody(adminRejectApplicationSchema),
+  rejectAdminApplication,
+);
+router.patch(
+  "/organizers/:id/revoke",
+  validateParams(adminApplicationIdParamSchema),
+  validateBody(adminRevokeOrganizerSchema),
+  revokeAdminOrganizer,
+);
+router.patch(
+  "/organizers/:id/reinstate",
+  validateParams(adminApplicationIdParamSchema),
+  reinstateAdminOrganizer,
+);
+
+router.get(
+  "/withdrawals",
+  validateQuery(adminWithdrawalsListQuerySchema),
+  getAdminWithdrawals,
+);
+router.post(
+  "/withdrawals/bulk-under-review",
+  validateBody(adminBulkUnderReviewWithdrawalSchema),
+  bulkMoveAdminWithdrawalsToUnderReview,
+);
+router.patch(
+  "/withdrawals/bulk-approve",
+  validateBody(adminBulkApproveWithdrawalSchema),
+  bulkApproveAdminWithdrawals,
+);
+router.patch(
+  "/withdrawals/bulk-reject",
+  validateBody(adminBulkRejectWithdrawalSchema),
+  bulkRejectAdminWithdrawals,
+);
+router.get(
+  "/withdrawals/:id",
+  validateParams(adminWithdrawalIdParamSchema),
+  getAdminWithdrawalDetails,
+);
+router.patch(
+  "/withdrawals/:id/under-review",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminUnderReviewWithdrawalSchema),
+  moveAdminWithdrawalToUnderReview,
+);
+router.patch(
+  "/withdrawals/:id/approve",
+  validateParams(adminWithdrawalIdParamSchema),
+  approveAdminWithdrawal,
+);
+router.patch(
+  "/withdrawals/:id/reject",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminRejectWithdrawalSchema),
+  rejectAdminWithdrawal,
+);
+router.patch(
+  "/withdrawals/:id/complete",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminCompleteWithdrawalSchema),
+  completeAdminWithdrawal,
+);
+router.get(
+  "/withdrawals/:id/audit-log",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateQuery(adminWithdrawalAuditQuerySchema),
+  getAdminWithdrawalAuditLog,
+);
+
+export default router;

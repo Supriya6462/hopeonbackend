@@ -15,6 +15,7 @@ import {
 import {
   createWithdrawalSchema,
   markPaidSchema,
+  moveWithdrawalToReviewSchema,
   rejectWithdrawalSchema,
   verifyWithdrawalDocumentSchema,
   withdrawalCampaignParamSchema,
@@ -70,6 +71,14 @@ router.get(
   withdrawalController.getOrganizerWithdrawals.bind(withdrawalController),
 );
 
+router.delete(
+  "/:id/cancel",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  validateParams(withdrawalIdParamSchema),
+  withdrawalController.cancelWithdrawalRequest.bind(withdrawalController),
+);
+
 router.get(
   "/available-balance/:campaignId",
   authenticate,
@@ -105,6 +114,16 @@ router.patch(
   withdrawalController.approveWithdrawal.bind(withdrawalController),
 );
 
+// Admin - Move withdrawal to under review
+router.patch(
+  "/:id/under-review",
+  authenticate,
+  authorize(Role.ADMIN),
+  validateParams(withdrawalIdParamSchema),
+  validateBody(moveWithdrawalToReviewSchema),
+  withdrawalController.moveToUnderReview.bind(withdrawalController),
+);
+
 // Admin - Reject withdrawal
 router.patch(
   "/:id/reject",
@@ -132,6 +151,15 @@ router.patch(
   validateParams(withdrawalIdParamSchema),
   validateBody(verifyWithdrawalDocumentSchema),
   withdrawalController.verifyWithdrawalDocument.bind(withdrawalController),
+);
+
+router.get(
+  "/:id/audit-log",
+  authenticate,
+  authorize(Role.ADMIN),
+  validateParams(withdrawalIdParamSchema),
+  validateQuery(withdrawalListQuerySchema.pick({ page: true, limit: true })),
+  withdrawalController.getWithdrawalAuditLog.bind(withdrawalController),
 );
 
 export default router;
