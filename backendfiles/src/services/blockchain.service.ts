@@ -34,6 +34,10 @@ function sortKeysDeep(value: unknown): unknown {
     return value.map(sortKeysDeep);
   }
 
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
   if (value && typeof value === "object") {
     const input = value as Record<string, unknown>;
     const keys = Object.keys(input).sort();
