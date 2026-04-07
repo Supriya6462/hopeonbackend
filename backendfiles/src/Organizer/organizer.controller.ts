@@ -111,6 +111,137 @@ export const getApplicationById = asyncHandler(
   },
 );
 
+export const getOrganizerApplicationStatus = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.getOrganizerApplicationStatus(
+      req.user!._id.toString(),
+    );
+
+    sendResponse(res, {
+      statusCode: 200,
+      data: result,
+    });
+  },
+);
+
+export const getUserApplicationDetails = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.getUserApplicationById(
+      req.user!._id.toString(),
+      req.params.applicationId,
+    );
+
+    sendResponse(res, {
+      statusCode: 200,
+      data: { application },
+    });
+  },
+);
+
+export const resubmitApplication = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const application = await organizerService.resubmitApplication(
+      req.user!._id.toString(),
+      req.params.applicationId,
+      req.body,
+    );
+
+    sendResponse(res, {
+      statusCode: 200,
+      message:
+        "Application moved to draft. Please upload documents to submit again.",
+      data: { application },
+    });
+  },
+);
+
+export const getOrganizerProfile = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.getOrganizerProfile(
+      req.user!._id.toString(),
+    );
+
+    sendResponse(res, {
+      statusCode: 200,
+      data: result,
+    });
+  },
+);
+
+export const uploadOrganizerProfileDocument = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const file = req.file as Express.Multer.File & {
+      location?: string;
+      key?: string;
+    };
+
+    if (!file) {
+      throw new ApiError("No file uploaded", 400, "NO_FILE_UPLOADED");
+    }
+
+    sendResponse(res, {
+      statusCode: 200,
+      message: "Document uploaded successfully",
+      data: {
+        url: file.location,
+        key: file.key,
+        documentType: req.body.documentType,
+      },
+    });
+  },
+);
+
+export const upsertOrganizerProfile = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.upsertOrganizerProfile(
+      req.user!._id.toString(),
+      req.body,
+    );
+
+    sendResponse(res, {
+      statusCode: result.created ? 201 : 200,
+      message: result.created
+        ? "Organizer profile created and submitted for verification."
+        : "Organizer profile updated and submitted for verification.",
+      data: {
+        verificationStatus: result.profile.verificationStatus,
+      },
+    });
+  },
+);
+
+export const verifyOrganizerProfile = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const { verificationStatus, rejectionReason } = req.body;
+    const profile = await organizerService.verifyOrganizerProfile(
+      req.params.id,
+      req.user!._id.toString(),
+      verificationStatus,
+      rejectionReason,
+    );
+
+    sendResponse(res, {
+      statusCode: 200,
+      message:
+        verificationStatus === "verified"
+          ? "Organizer profile verified."
+          : "Organizer profile rejected.",
+      data: { profile },
+    });
+  },
+);
+
+export const getAdminOrganizerProfiles = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
+    const result = await organizerService.listOrganizerProfiles(req.query);
+
+    sendResponse(res, {
+      statusCode: 200,
+      data: result,
+    });
+  },
+);
+
 export const approveApplication = asyncHandler(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id) {

@@ -3,6 +3,10 @@ import { Donation } from "../models/Donation.model.js";
 import { User } from "../models/User.model.js";
 import { DonationStatus, Role } from "../types/enums.js";
 import { ApiError } from "../utils/ApiError.js";
+import {
+  createInAppNotification,
+  NotificationEventType,
+} from "../services/notification.service.js";
 import { APIFeatures, QueryString } from "../utils/apiFeatures.js";
 import mongoose from "mongoose";
 
@@ -281,6 +285,25 @@ export class CampaignService {
 
     if (!campaign) {
       throw new ApiError("Campaign not found", 404, "CAMPAIGN_NOT_FOUND");
+    }
+
+    try {
+      await createInAppNotification({
+        recipient: campaign.owner as any,
+        eventType: NotificationEventType.CAMPAIGN_APPROVED,
+        title: "Campaign Approved",
+        message: `Your campaign \"${campaign.title}\" is approved and now accepting donations.`,
+        payload: {
+          campaignId: campaign._id,
+          campaignTitle: campaign.title,
+          status: campaign.status,
+        },
+      });
+    } catch (notifyError) {
+      console.error(
+        "Failed to create campaign approved notification:",
+        notifyError,
+      );
     }
 
     return campaign;

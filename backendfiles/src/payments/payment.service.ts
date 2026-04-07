@@ -1,10 +1,15 @@
 import mongoose from "mongoose";
 import { Donation } from "../models/Donation.model";
+import { Campaign } from "../models/Campaign.model.js";
 import { DonationStatus } from "../types/enums";
 import { InitiatePaymentDTO } from "./dto/initiate-payment.dto";
 import { VerifyPaymentDTO } from "./dto/verify-payment.dto";
 import { PayPalProvider } from "./providers/paypal.provider";
 import { ApiError } from "../utils/ApiError";
+import {
+  createInAppNotification,
+  NotificationEventType,
+} from "../services/notification.service.js";
 
 export class PaymentService {
   async initiate(
@@ -184,6 +189,45 @@ export class PaymentService {
       await donation.save({ session });
 
       await session.commitTransaction();
+
+      try {
+        const campaign = await Campaign.findById(donation.campaign).select(
+          "title owner",
+        );
+
+        await createInAppNotification({
+          recipient: donation.donor,
+          eventType: NotificationEventType.DONATION_COMPLETED,
+          title: "Donation Confirmed",
+          message: "Your donation payment has been verified successfully.",
+          payload: {
+            donationId: donation._id,
+            campaignId: donation.campaign,
+            campaignTitle: campaign?.title,
+            amount: donation.amount,
+          },
+        });
+
+        if (campaign?.owner) {
+          await createInAppNotification({
+            recipient: campaign.owner,
+            eventType: NotificationEventType.DONATION_RECEIVED,
+            title: "New Donation Received",
+            message: `A donation was completed for ${campaign.title}.`,
+            payload: {
+              donationId: donation._id,
+              campaignId: campaign._id,
+              campaignTitle: campaign.title,
+              amount: donation.amount,
+            },
+          });
+        }
+      } catch (notifyError) {
+        console.error(
+          "Failed to create payment verification notifications:",
+          notifyError,
+        );
+      }
 
       return {
         success: true,

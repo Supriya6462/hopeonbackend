@@ -1,4 +1,5 @@
 import { OrganizerApplication } from "../models/OrganizerApplication.model.js";
+import OrganizerProfile from "../models/OrganizerProfile.model.js";
 import { User } from "../models/User.model.js";
 import { Campaign } from "../models/Campaign.model.js";
 import { WithdrawalRequest } from "../models/WithdrawalRequest.model.js";
@@ -9,9 +10,14 @@ import {
   WithdrawalStatus,
 } from "../types/enums.js";
 import mongoose from "mongoose";
+import path from "node:path";
 import { uploadLocalFile } from "../utils/localUpload.util.js";
 import { ApiError } from "../utils/ApiError.js";
 import { mailService } from "../mail/mail.service.js";
+import {
+  createInAppNotification,
+  NotificationEventType,
+} from "../services/notification.service.js";
 
 interface SubmitApplicationDTO {
   organizationName: string;
@@ -38,7 +44,195 @@ interface ApplicationFilters {
   limit?: number;
 }
 
+interface OrganizerProfileUpsertDTO {
+  bankDetails: {
+    accountHolderName: string;
+    bankName: string;
+    accountNumber: string;
+    routingNumber?: string;
+    swiftCode?: string;
+    iban?: string;
+    accountType: "savings" | "checking" | "business";
+    bankAddress?: string;
+    bankCountry: string;
+  };
+  documents: {
+    governmentId?: Record<string, unknown>;
+    bankProof?: Record<string, unknown>;
+    addressProof?: Record<string, unknown>;
+    taxDocument?: Record<string, unknown>;
+  };
+  kycInfo: Record<string, unknown>;
+}
+
+interface OrganizerProfileFilters {
+  status?: "pending" | "verified" | "rejected";
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
 export class OrganizerService {
+  private async resolveUploadedDocument(
+    file: Express.Multer.File,
+    fallbackFolder: string,
+  ): Promise<{ url: string; key: string; uploadedAt: Date }> {
+    const fileWithMeta = file as Express.Multer.File & {
+      location?: string;
+      key?: string;
+    };
+
+    if (fileWithMeta.location && fileWithMeta.key) {
+      return {
+        url: fileWithMeta.location,
+        key: fileWithMeta.key,
+        uploadedAt: new Date(),
+      };
+    }
+
+    if (file.path) {
+      const uploadDirName = process.env.UPLOAD_DIR || "uploads";
+      const uploadBasePath = path.resolve(process.cwd(), uploadDirName);
+      const backendBaseUrl =
+        process.env.BACKEND_URL ||
+        `http://localhost:${process.env.PORT || 3001}`;
+
+      const relativeFilePath = path.relative(uploadBasePath, file.path);
+      const safeRelativeFilePath =
+        relativeFilePath && !relativeFilePath.startsWith("..")
+          ? relativeFilePath
+          : path.join("documents", file.filename || file.originalname);
+      const normalizedPath = safeRelativeFilePath.split(path.sep).join("/");
+
+      return {
+        url: `${backendBaseUrl}/${uploadDirName}/${normalizedPath}`,
+        key: normalizedPath,
+        uploadedAt: new Date(),
+      };
+    }
+
+    if (file.buffer) {
+      const result = await uploadLocalFile(
+        file.buffer,
+        fallbackFolder,
+        file.originalname,
+        file.mimetype,
+      );
+      return {
+        url: result.url,
+        key: result.key,
+        uploadedAt: result.uploadedAt,
+      };
+    }
+
+    throw new ApiError(
+      "Uploaded file payload is invalid",
+      400,
+      "INVALID_UPLOADED_FILE",
+    );
+  }
+
+  private pushStatusHistory(
+    application: any,
+    {
+      toStatus,
+      changedBy,
+      reason = null,
+    }: {
+      toStatus: ApplicationStatus;
+      changedBy: string;
+      reason?: string | null;
+    },
+  ) {
+    application.statusHistory = application.statusHistory || [];
+    application.statusHistory.push({
+      fromStatus: application.status ?? null,
+      toStatus,
+      changedBy: new mongoose.Types.ObjectId(changedBy),
+      reason,
+      changedAt: new Date(),
+    });
+  }
+
+  private buildReusableDocumentsFromApplication(application: any) {
+    if (!application?.documents) {
+      return {
+        governmentId: null,
+        addressProof: null,
+        taxDocument: null,
+      };
+    }
+
+    return {
+      governmentId: application.documents.governmentId?.url
+        ? {
+            url: application.documents.governmentId.url,
+            key: application.documents.governmentId.publicId,
+            type: "national_id",
+            source: "organizer_application",
+          }
+        : null,
+      addressProof: application.documents.addressProof?.url
+        ? {
+            url: application.documents.addressProof.url,
+            key: application.documents.addressProof.publicId,
+            type: "government_letter",
+            source: "organizer_application",
+          }
+        : null,
+      taxDocument: application.documents.taxId?.url
+        ? {
+            url: application.documents.taxId.url,
+            key: application.documents.taxId.publicId,
+            type: "tax_id",
+            source: "organizer_application",
+          }
+        : null,
+    };
+  }
+
+  private mergeOrganizerDocumentsWithDefaults(
+    inputDocuments: any,
+    defaults: any,
+  ) {
+    return {
+      governmentId: inputDocuments?.governmentId?.url
+        ? inputDocuments.governmentId
+        : defaults.governmentId,
+      bankProof: inputDocuments?.bankProof,
+      addressProof: inputDocuments?.addressProof?.url
+        ? inputDocuments.addressProof
+        : defaults.addressProof,
+      taxDocument: inputDocuments?.taxDocument?.url
+        ? inputDocuments.taxDocument
+        : defaults.taxDocument,
+    };
+  }
+
+  private async notifyAdminsAboutOrganizerApplication(application: any) {
+    const admins = await User.find({ role: Role.ADMIN }).select("_id");
+    if (!admins.length) {
+      return;
+    }
+
+    await Promise.all(
+      admins.map((admin) =>
+        createInAppNotification({
+          recipient: admin._id,
+          eventType: NotificationEventType.ORGANIZER_APPLICATION_PENDING_REVIEW,
+          title: "New Organizer Application",
+          message: "A donor submitted an organizer application for review.",
+          payload: {
+            applicationId: application._id,
+            userId: application.user,
+            organizationName: application.organizationName,
+            status: application.status,
+          },
+        }),
+      ),
+    );
+  }
+
   // Submit organizer application
   async submitApplication(
     userId: string,
@@ -221,9 +415,12 @@ export class OrganizerService {
       throw new ApiError("Application not found", 404, "APPLICATION_NOT_FOUND");
     }
 
-    if (application.status !== ApplicationStatus.DRAFT) {
+    if (
+      application.status !== ApplicationStatus.DRAFT &&
+      application.status !== ApplicationStatus.PENDING
+    ) {
       throw new ApiError(
-        "Can only upload documents to draft applications",
+        "Can only upload documents to draft or pending applications",
         400,
         "INVALID_APPLICATION_STATUS",
       );
@@ -266,11 +463,9 @@ export class OrganizerService {
     for (const field of singleDocFields) {
       if (files[field]?.[0]) {
         const file = files[field]![0];
-        const result = await uploadLocalFile(
-          file.buffer,
+        const result = await this.resolveUploadedDocument(
+          file,
           `${uploadFolder}/${field}`,
-          file.originalname,
-          file.mimetype,
         );
         documents[field] = {
           url: result.url,
@@ -284,11 +479,9 @@ export class OrganizerService {
     if (files.additionalDocuments?.length) {
       documents.additionalDocuments = [];
       for (const file of files.additionalDocuments) {
-        const result = await uploadLocalFile(
-          file.buffer,
+        const result = await this.resolveUploadedDocument(
+          file,
           `${uploadFolder}/additional`,
-          file.originalname,
-          file.mimetype,
         );
         documents.additionalDocuments.push({
           name: file.originalname,
@@ -299,16 +492,16 @@ export class OrganizerService {
       }
     }
 
-    // Update application with documents and change status to PENDING
+    // Update application with documents and keep status transition idempotent.
     application.documents = documents;
-    const previousStatus = application.status;
+    if (application.status !== ApplicationStatus.PENDING) {
+      this.pushStatusHistory(application, {
+        toStatus: ApplicationStatus.PENDING,
+        changedBy: userId,
+      });
+    }
     application.status = ApplicationStatus.PENDING;
     application.documentsVerified = false; // Admin needs to verify
-    application.statusHistory.push({
-      fromStatus: previousStatus,
-      toStatus: ApplicationStatus.PENDING,
-      changedBy: new mongoose.Types.ObjectId(userId),
-    });
     await application.save();
 
     // Send email notification to user
@@ -322,6 +515,27 @@ export class OrganizerService {
     } catch (emailError) {
       console.error("Failed to send application submitted email:", emailError);
       // Don't fail the request if email fails
+    }
+
+    try {
+      await createInAppNotification({
+        recipient: userId,
+        eventType: NotificationEventType.ORGANIZER_APPLICATION_SUBMITTED,
+        title: "Application Submitted",
+        message:
+          "Your organizer application is pending admin review. We will notify you once it is reviewed.",
+        payload: {
+          applicationId: application._id,
+          status: application.status,
+        },
+      });
+
+      await this.notifyAdminsAboutOrganizerApplication(application);
+    } catch (notifyError) {
+      console.error(
+        "Failed to create organizer application notifications:",
+        notifyError,
+      );
     }
 
     return application;
@@ -412,6 +626,404 @@ export class OrganizerService {
     return application;
   }
 
+  async getOrganizerApplicationStatus(userId: string) {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new ApiError("Invalid user ID", 400, "INVALID_USER_ID");
+    }
+
+    const user = await User.findById(userId).select("role isOrganizerApproved");
+    if (!user) {
+      throw new ApiError("User not found", 404, "USER_NOT_FOUND");
+    }
+
+    const latestApp = await OrganizerApplication.findOne({ user: userId }).sort(
+      {
+        createdAt: -1,
+      },
+    );
+
+    if (!latestApp) {
+      return {
+        hasApplication: false,
+        canResubmit: false,
+        application: null,
+        currentUserRole: user.role,
+        isOrganizerApproved: user.isOrganizerApproved,
+      };
+    }
+
+    return {
+      hasApplication: true,
+      canResubmit: [
+        ApplicationStatus.REJECTED,
+        ApplicationStatus.REVOKED,
+      ].includes(latestApp.status),
+      application: latestApp,
+      currentUserRole: user.role,
+      isOrganizerApproved: user.isOrganizerApproved,
+    };
+  }
+
+  async getUserApplicationById(userId: string, applicationId: string) {
+    if (!mongoose.Types.ObjectId.isValid(applicationId)) {
+      throw new ApiError(
+        "Invalid application ID",
+        400,
+        "INVALID_APPLICATION_ID",
+      );
+    }
+
+    const application = await OrganizerApplication.findById(applicationId);
+    if (!application) {
+      throw new ApiError("Application not found", 404, "APPLICATION_NOT_FOUND");
+    }
+
+    if (application.user.toString() !== userId) {
+      throw new ApiError("Forbidden", 403, "FORBIDDEN");
+    }
+
+    return application;
+  }
+
+  async resubmitApplication(
+    userId: string,
+    applicationId: string,
+    applicationData: SubmitApplicationDTO,
+  ) {
+    const application = await this.getUserApplicationById(
+      userId,
+      applicationId,
+    );
+
+    if (
+      ![ApplicationStatus.REJECTED, ApplicationStatus.REVOKED].includes(
+        application.status,
+      )
+    ) {
+      throw new ApiError(
+        "Only rejected or revoked applications can be resubmitted",
+        400,
+        "INVALID_APPLICATION_STATUS",
+      );
+    }
+
+    const currentlyPending = await OrganizerApplication.findOne({
+      user: userId,
+      status: ApplicationStatus.PENDING,
+      _id: { $ne: application._id },
+    });
+
+    if (currentlyPending) {
+      throw new ApiError(
+        "You already have a pending organizer application",
+        409,
+        "APPLICATION_EXISTS",
+      );
+    }
+
+    this.pushStatusHistory(application, {
+      toStatus: ApplicationStatus.DRAFT,
+      changedBy: userId,
+      reason: "Organizer resubmitted application after review.",
+    });
+
+    application.organizationName = applicationData.organizationName.trim();
+    application.description = applicationData.description.trim();
+    application.contactEmail = applicationData.contactEmail?.trim() || "";
+    application.phoneNumber = applicationData.phoneNumber?.trim() || "";
+    application.website = applicationData.website?.trim() || "";
+    application.organizationType =
+      applicationData.organizationType || OrganizationType.OTHER;
+    application.status = ApplicationStatus.DRAFT;
+    application.reviewedBy = null as any;
+    application.reviewedAt = null as any;
+    application.rejectionReason = null as any;
+    application.adminNotes = null as any;
+    application.documentsVerified = false;
+
+    await application.save();
+
+    return application;
+  }
+
+  async getOrganizerProfile(userId: string) {
+    const approvedApplication = await OrganizerApplication.findOne({
+      user: userId,
+      status: ApplicationStatus.APPROVED,
+    })
+      .sort({ reviewedAt: -1, updatedAt: -1 })
+      .select("documents")
+      .lean();
+
+    const documentDefaults =
+      this.buildReusableDocumentsFromApplication(approvedApplication);
+
+    const profile = await OrganizerProfile.findOne({ organizer: userId });
+
+    if (!profile) {
+      return {
+        hasProfile: false,
+        verificationStatus: null,
+        profile: null,
+        documentDefaults,
+        documentReuseSummary: {
+          reusableDocumentsCount:
+            Object.values(documentDefaults).filter(Boolean).length,
+          requiresBankProofUpload: true,
+        },
+      };
+    }
+
+    return {
+      hasProfile: true,
+      verificationStatus: profile.verificationStatus,
+      profile: {
+        ...profile.toObject(),
+        bankDetails:
+          typeof (profile as any).getMaskedBankDetails === "function"
+            ? (profile as any).getMaskedBankDetails()
+            : profile.bankDetails,
+      },
+      documentDefaults,
+      documentReuseSummary: {
+        reusableDocumentsCount:
+          Object.values(documentDefaults).filter(Boolean).length,
+        requiresBankProofUpload: true,
+      },
+    };
+  }
+
+  async upsertOrganizerProfile(
+    userId: string,
+    payload: OrganizerProfileUpsertDTO,
+  ) {
+    const approvedApplication = await OrganizerApplication.findOne({
+      user: userId,
+      status: ApplicationStatus.APPROVED,
+    })
+      .sort({ reviewedAt: -1, updatedAt: -1 })
+      .select("documents")
+      .lean();
+
+    const reusableDefaults =
+      this.buildReusableDocumentsFromApplication(approvedApplication);
+    const mergedDocuments = this.mergeOrganizerDocumentsWithDefaults(
+      payload.documents,
+      reusableDefaults,
+    );
+
+    if (
+      !mergedDocuments.governmentId?.url ||
+      !mergedDocuments.bankProof?.url ||
+      !mergedDocuments.addressProof?.url
+    ) {
+      throw new ApiError(
+        "All required documents must be available (Government ID, Bank Proof, Address Proof). Government ID and Address Proof can be reused from your approved organizer application.",
+        400,
+        "MISSING_REQUIRED_DOCUMENTS",
+      );
+    }
+
+    const existingProfile = await OrganizerProfile.findOne({
+      organizer: userId,
+    });
+    if (existingProfile && existingProfile.verificationStatus === "verified") {
+      throw new ApiError(
+        "Your organizer profile is already verified and locked.",
+        409,
+        "PROFILE_LOCKED",
+      );
+    }
+
+    const profile =
+      existingProfile ||
+      new OrganizerProfile({
+        organizer: userId,
+      });
+
+    profile.bankDetails = payload.bankDetails as any;
+    profile.documents = mergedDocuments as any;
+    profile.kycInfo = payload.kycInfo as any;
+    profile.verificationStatus = "pending";
+    profile.verifiedBy = null as any;
+    profile.verifiedAt = null as any;
+    profile.rejectionReason = undefined as any;
+
+    await profile.save();
+
+    try {
+      const admins = await User.find({ role: Role.ADMIN }).select("_id");
+      if (admins.length) {
+        await Promise.all(
+          admins.map((admin) =>
+            createInAppNotification({
+              recipient: admin._id,
+              eventType: NotificationEventType.ORGANIZER_PROFILE_PENDING_REVIEW,
+              title: "Organizer Profile Verification Required",
+              message: `An organizer profile needs verification for ${
+                (payload.kycInfo?.fullLegalName as string) || "an organizer"
+              }.`,
+              payload: {
+                organizerProfileId: profile._id,
+                organizerId: profile.organizer,
+                verificationStatus: "pending",
+              },
+            }),
+          ),
+        );
+      }
+    } catch (notifyError) {
+      console.error(
+        "Failed to create admin notification for organizer profile submission:",
+        notifyError,
+      );
+    }
+
+    return {
+      profile,
+      created: !existingProfile,
+    };
+  }
+
+  async listOrganizerProfiles(filters: OrganizerProfileFilters = {}) {
+    const page = Math.max(1, Number(filters.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(filters.limit) || 20));
+    const status = filters.status;
+    const search = (filters.search || "").trim();
+
+    const match = {
+      ...(status ? { verificationStatus: status } : {}),
+    };
+
+    const pipeline: any[] = [
+      { $match: match },
+      {
+        $lookup: {
+          from: "users",
+          localField: "organizer",
+          foreignField: "_id",
+          as: "organizerUser",
+        },
+      },
+      {
+        $unwind: {
+          path: "$organizerUser",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+    ];
+
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { "organizerUser.name": { $regex: search, $options: "i" } },
+            { "organizerUser.email": { $regex: search, $options: "i" } },
+            { "kycInfo.fullLegalName": { $regex: search, $options: "i" } },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      { $sort: { updatedAt: -1 } },
+      {
+        $project: {
+          organizer: 1,
+          verificationStatus: 1,
+          verifiedBy: 1,
+          verifiedAt: 1,
+          rejectionReason: 1,
+          kycInfo: 1,
+          documents: 1,
+          bankDetails: {
+            accountHolderName: "$bankDetails.accountHolderName",
+            bankName: "$bankDetails.bankName",
+            bankCountry: "$bankDetails.bankCountry",
+            accountType: "$bankDetails.accountType",
+            accountNumberLast4: "$bankDetails.accountNumberLast4",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+          organizerUser: {
+            _id: "$organizerUser._id",
+            name: "$organizerUser.name",
+            email: "$organizerUser.email",
+          },
+        },
+      },
+      {
+        $facet: {
+          items: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+          meta: [{ $count: "total" }],
+        },
+      },
+    );
+
+    const [result] = await OrganizerProfile.aggregate(pipeline);
+    const items = result?.items || [];
+    const total = result?.meta?.[0]?.total || 0;
+
+    return {
+      organizerProfiles: items,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async verifyOrganizerProfile(
+    profileId: string,
+    adminUserId: string,
+    verificationStatus: "verified" | "rejected",
+    rejectionReason?: string,
+  ) {
+    const profile = await OrganizerProfile.findById(profileId);
+    if (!profile) {
+      throw new ApiError(
+        "Organizer profile not found",
+        404,
+        "PROFILE_NOT_FOUND",
+      );
+    }
+
+    profile.verificationStatus = verificationStatus;
+    profile.verifiedBy = new mongoose.Types.ObjectId(adminUserId);
+    profile.verifiedAt = new Date();
+    profile.rejectionReason =
+      verificationStatus === "rejected"
+        ? rejectionReason?.trim() || "Profile verification was rejected."
+        : (undefined as any);
+
+    await profile.save();
+
+    await createInAppNotification({
+      recipient: profile.organizer,
+      eventType:
+        verificationStatus === "verified"
+          ? NotificationEventType.ORGANIZER_PROFILE_VERIFIED
+          : NotificationEventType.ORGANIZER_PROFILE_REJECTED,
+      title:
+        verificationStatus === "verified"
+          ? "Organizer Profile Verified"
+          : "Organizer Profile Rejected",
+      message:
+        verificationStatus === "verified"
+          ? "Your organizer profile is verified. You can now submit withdrawal requests."
+          : "Your organizer profile was rejected. Review feedback and resubmit.",
+      payload: {
+        organizerProfileId: profile._id,
+        verificationStatus,
+        rejectionReason: profile.rejectionReason,
+      },
+    });
+
+    return profile;
+  }
+
   // Approve application (admin only)
   async approveApplication(
     applicationId: string,
@@ -460,7 +1072,6 @@ export class OrganizerService {
 
     try {
       // Update application status
-      const previousStatus = application.status;
       application.status = ApplicationStatus.APPROVED;
       application.reviewedBy = new mongoose.Types.ObjectId(adminId);
       application.reviewedAt = new Date();
@@ -468,10 +1079,9 @@ export class OrganizerService {
       if (adminNotes) {
         application.adminNotes = adminNotes.trim();
       }
-      application.statusHistory.push({
-        fromStatus: previousStatus,
+      this.pushStatusHistory(application, {
         toStatus: ApplicationStatus.APPROVED,
-        changedBy: new mongoose.Types.ObjectId(adminId),
+        changedBy: adminId,
         reason: adminNotes?.trim() || null,
       });
       await application.save();
@@ -492,6 +1102,25 @@ export class OrganizerService {
       } catch (emailError) {
         console.error("Failed to send approval email:", emailError);
         // Don't fail the request if email fails
+      }
+
+      try {
+        await createInAppNotification({
+          recipient: userId,
+          eventType: NotificationEventType.ORGANIZER_APPLICATION_APPROVED,
+          title: "Organizer Application Approved",
+          message: "Your organizer application was approved.",
+          payload: {
+            applicationId: application._id,
+            organizationName: application.organizationName,
+            status: ApplicationStatus.APPROVED,
+          },
+        });
+      } catch (notifyError) {
+        console.error(
+          "Failed to create organizer approval notification:",
+          notifyError,
+        );
       }
 
       return application;
@@ -553,8 +1182,7 @@ export class OrganizerService {
     const userName = user.name;
     const organizationName = application.organizationName;
 
-    // Update application with rejection details before deletion
-    const previousStatus = application.status;
+    // Update application with rejection details and retain record for resubmission/history.
     application.status = ApplicationStatus.REJECTED;
     application.reviewedBy = new mongoose.Types.ObjectId(adminId);
     application.reviewedAt = new Date();
@@ -562,15 +1190,14 @@ export class OrganizerService {
     if (adminNotes) {
       application.adminNotes = adminNotes.trim();
     }
-    application.statusHistory.push({
-      fromStatus: previousStatus,
+    this.pushStatusHistory(application, {
       toStatus: ApplicationStatus.REJECTED,
-      changedBy: new mongoose.Types.ObjectId(adminId),
+      changedBy: adminId,
       reason: rejectionReason.trim(),
     });
     await application.save();
 
-    // Send rejection email before deleting
+    // Send rejection email after status update.
     let emailSent = false;
     try {
       await mailService.sendOrganizerApplicationRejected({
@@ -582,14 +1209,32 @@ export class OrganizerService {
       emailSent = true;
     } catch (emailError) {
       console.error("Failed to send rejection email:", emailError);
-      // Continue with deletion even if email fails
+      // Continue even if email fails.
     }
 
-    // Delete the rejected application from database
-    await OrganizerApplication.findByIdAndDelete(applicationId);
+    try {
+      await createInAppNotification({
+        recipient: user._id,
+        eventType: NotificationEventType.ORGANIZER_APPLICATION_REJECTED,
+        title: "Organizer Application Rejected",
+        message:
+          "Your organizer application was rejected. You can update and resubmit it.",
+        payload: {
+          applicationId: application._id,
+          organizationName: application.organizationName,
+          rejectionReason: rejectionReason.trim(),
+          status: ApplicationStatus.REJECTED,
+        },
+      });
+    } catch (notifyError) {
+      console.error(
+        "Failed to create organizer rejection notification:",
+        notifyError,
+      );
+    }
 
     return {
-      message: "Application rejected and removed from database",
+      message: "Application rejected successfully",
       rejectionReason: rejectionReason.trim(),
       userNotified: emailSent,
     };

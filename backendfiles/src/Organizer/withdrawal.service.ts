@@ -4,6 +4,11 @@ import { WithdrawalStatus, Role, DonationStatus } from "../types/enums.js";
 import { ApiError } from "../utils/ApiError.js";
 import mongoose from "mongoose";
 import { Donation } from "../models/Donation.model.js";
+import {
+  createInAppNotification,
+  NotificationEventType,
+  notifyCampaignDonorsInApp,
+} from "../services/notification.service.js";
 
 interface CreateWithdrawalDTO {
   campaign: string;
@@ -366,6 +371,38 @@ export class WithdrawalService {
     withdrawal.reviewedBy = new mongoose.Types.ObjectId(adminId);
     await withdrawal.save();
 
+    try {
+      await createInAppNotification({
+        recipient: withdrawal.organizer,
+        eventType: "withdrawal_approved",
+        title: "Withdrawal Approved",
+        message: "Your withdrawal request has been approved and scheduled.",
+        payload: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: withdrawal.campaign,
+          amount: withdrawal.amount,
+          status: withdrawal.status,
+        },
+      });
+
+      const campaign = await Campaign.findById(withdrawal.campaign).select(
+        "title",
+      );
+      await notifyCampaignDonorsInApp({
+        campaignId: withdrawal.campaign.toString(),
+        withdrawalRequestId: withdrawal._id.toString(),
+        campaignTitle: campaign?.title || "this campaign",
+        status: "scheduled",
+        amount: withdrawal.amount,
+        eventDate: new Date(),
+      });
+    } catch (notifyError) {
+      console.error(
+        "Failed to notify withdrawal approval events:",
+        notifyError,
+      );
+    }
+
     return withdrawal;
   }
 
@@ -407,6 +444,29 @@ export class WithdrawalService {
     withdrawal.rejectionReason =
       adminMessage?.trim() || "Withdrawal request rejected";
     await withdrawal.save();
+
+    try {
+      await createInAppNotification({
+        recipient: withdrawal.organizer,
+        eventType: "withdrawal_rejected",
+        title: "Withdrawal Rejected",
+        message:
+          withdrawal.rejectionReason ||
+          "Your withdrawal request was rejected. Please review and retry.",
+        payload: {
+          withdrawalRequestId: withdrawal._id,
+          campaignId: withdrawal.campaign,
+          amount: withdrawal.amount,
+          status: withdrawal.status,
+          rejectionReason: withdrawal.rejectionReason,
+        },
+      });
+    } catch (notifyError) {
+      console.error(
+        "Failed to notify withdrawal rejection event:",
+        notifyError,
+      );
+    }
 
     return withdrawal;
   }
@@ -514,6 +574,36 @@ export class WithdrawalService {
       await withdrawal.save({ session });
 
       await session.commitTransaction();
+
+      try {
+        await createInAppNotification({
+          recipient: withdrawal.organizer,
+          eventType: NotificationEventType.CAMPAIGN_WITHDRAWAL_COMPLETED,
+          title: "Withdrawal Paid",
+          message: "Your withdrawal request has been marked as paid.",
+          payload: {
+            withdrawalRequestId: withdrawal._id,
+            campaignId: withdrawal.campaign,
+            amount: withdrawal.amount,
+            status: withdrawal.status,
+            transactionReference: withdrawal.transactionReference,
+          },
+        });
+
+        const campaign = await Campaign.findById(withdrawal.campaign).select(
+          "title",
+        );
+        await notifyCampaignDonorsInApp({
+          campaignId: withdrawal.campaign.toString(),
+          withdrawalRequestId: withdrawal._id.toString(),
+          campaignTitle: campaign?.title || "this campaign",
+          status: "completed",
+          amount: withdrawal.amount,
+          eventDate: withdrawal.completedAt || new Date(),
+        });
+      } catch (notifyError) {
+        console.error("Failed to notify withdrawal paid events:", notifyError);
+      }
 
       return withdrawal;
     } catch (error) {

@@ -1,6 +1,14 @@
-import { Router } from "express";
+import { NextFunction, Request, Response, Router } from "express";
 import { Role } from "../types/enums.js";
 import {
+  getOrganizerProfile,
+  uploadOrganizerProfileDocument,
+  upsertOrganizerProfile,
+  verifyOrganizerProfile,
+  getAdminOrganizerProfiles,
+  getOrganizerApplicationStatus,
+  getUserApplicationDetails,
+  resubmitApplication,
   submitApplication,
   createDraftApplication,
   getDraftApplication,
@@ -14,7 +22,12 @@ import {
   revokeOrganizer,
   reinstateOrganizer,
 } from "./organizer.controller.js";
-import { documentUpload, organizerDocumentFields } from "../config/multer.js";
+import {
+  applyFileMetadataForResponse,
+  documentUpload,
+  handleDocumentUploadError,
+  organizerDocumentFields,
+} from "../config/multer.js";
 import { authenticate, authorize } from "../middleware/auth.middleware.js";
 import {
   validateBody,
@@ -26,13 +39,91 @@ import {
   approveApplicationSchema,
   getApplicationsQuerySchema,
   getOrganizersQuerySchema,
+  organizerProfileUpsertSchema,
+  organizerProfilesQuerySchema,
+  organizerProfileVerifySchema,
   organizerIdParamSchema,
   rejectApplicationSchema,
+  resubmitApplicationSchema,
   revokeOrganizerSchema,
   submitApplicationSchema,
 } from "../validation/organizer.validation.js";
 
 const router = Router();
+
+const singleOrganizerProfileDocumentUpload = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  documentUpload.single("document")(req, res, (error) => {
+    if (error) {
+      return handleDocumentUploadError(error, res);
+    }
+
+    applyFileMetadataForResponse(req);
+    return next();
+  });
+};
+
+router.get(
+  "/profile",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  getOrganizerProfile,
+);
+
+router.post(
+  "/profile/upload-document",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  singleOrganizerProfileDocumentUpload,
+  uploadOrganizerProfileDocument,
+);
+
+router.post(
+  "/profile",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  validateBody(organizerProfileUpsertSchema),
+  upsertOrganizerProfile,
+);
+
+router.patch(
+  "/admin/organizer-profiles/:id/verify",
+  authenticate,
+  authorize(Role.ADMIN),
+  validateParams(organizerIdParamSchema),
+  validateBody(organizerProfileVerifySchema),
+  verifyOrganizerProfile,
+);
+
+router.get(
+  "/admin/organizer-profiles",
+  authenticate,
+  authorize(Role.ADMIN),
+  validateQuery(organizerProfilesQuerySchema),
+  getAdminOrganizerProfiles,
+);
+
+router.get("/application-status", authenticate, getOrganizerApplicationStatus);
+
+router.get(
+  "/applications/:applicationId",
+  authenticate,
+  authorize(Role.DONOR),
+  validateParams(applicationIdParamSchema),
+  getUserApplicationDetails,
+);
+
+router.patch(
+  "/applications/:applicationId/resubmit",
+  authenticate,
+  authorize(Role.DONOR),
+  validateParams(applicationIdParamSchema),
+  validateBody(resubmitApplicationSchema),
+  resubmitApplication,
+);
 
 // Donor - Submit organizer application
 router.post(
