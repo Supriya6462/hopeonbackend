@@ -9,7 +9,8 @@
     "dev": "tsx watch backendfiles/server.ts",
     "type-check": "tsc --noEmit",
     "create-admin": "tsx backendfiles/src/scripts/createAdmin.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -47,6 +48,7 @@
     "@types/nodemailer": "^6.4.23",
     "nodemon": "^3.1.11",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.3"
   }
 }
