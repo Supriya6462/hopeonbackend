@@ -149,8 +149,18 @@ router.get(
   validateQuery(adminWithdrawalsListQuerySchema),
   getAdminWithdrawals,
 );
+router.get(
+  "/withdrawal-requests",
+  validateQuery(adminWithdrawalsListQuerySchema),
+  getAdminWithdrawals,
+);
 router.post(
   "/withdrawals/bulk-under-review",
+  validateBody(adminBulkUnderReviewWithdrawalSchema),
+  bulkMoveAdminWithdrawalsToUnderReview,
+);
+router.post(
+  "/withdrawal-requests/bulk-under-review",
   validateBody(adminBulkUnderReviewWithdrawalSchema),
   bulkMoveAdminWithdrawalsToUnderReview,
 );
@@ -160,12 +170,27 @@ router.patch(
   bulkApproveAdminWithdrawals,
 );
 router.patch(
+  "/withdrawal-requests/bulk-approve",
+  validateBody(adminBulkApproveWithdrawalSchema),
+  bulkApproveAdminWithdrawals,
+);
+router.patch(
   "/withdrawals/bulk-reject",
+  validateBody(adminBulkRejectWithdrawalSchema),
+  bulkRejectAdminWithdrawals,
+);
+router.patch(
+  "/withdrawal-requests/bulk-reject",
   validateBody(adminBulkRejectWithdrawalSchema),
   bulkRejectAdminWithdrawals,
 );
 router.get(
   "/withdrawals/:id",
+  validateParams(adminWithdrawalIdParamSchema),
+  getAdminWithdrawalDetails,
+);
+router.get(
+  "/withdrawal-requests/:id",
   validateParams(adminWithdrawalIdParamSchema),
   getAdminWithdrawalDetails,
 );
@@ -176,7 +201,18 @@ router.patch(
   moveAdminWithdrawalToUnderReview,
 );
 router.patch(
+  "/withdrawal-requests/:id/under-review",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminUnderReviewWithdrawalSchema),
+  moveAdminWithdrawalToUnderReview,
+);
+router.patch(
   "/withdrawals/:id/approve",
+  validateParams(adminWithdrawalIdParamSchema),
+  approveAdminWithdrawal,
+);
+router.patch(
+  "/withdrawal-requests/:id/approve",
   validateParams(adminWithdrawalIdParamSchema),
   approveAdminWithdrawal,
 );
@@ -187,13 +223,31 @@ router.patch(
   rejectAdminWithdrawal,
 );
 router.patch(
+  "/withdrawal-requests/:id/reject",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminRejectWithdrawalSchema),
+  rejectAdminWithdrawal,
+);
+router.patch(
   "/withdrawals/:id/complete",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateBody(adminCompleteWithdrawalSchema),
+  completeAdminWithdrawal,
+);
+router.patch(
+  "/withdrawal-requests/:id/complete",
   validateParams(adminWithdrawalIdParamSchema),
   validateBody(adminCompleteWithdrawalSchema),
   completeAdminWithdrawal,
 );
 router.get(
   "/withdrawals/:id/audit-log",
+  validateParams(adminWithdrawalIdParamSchema),
+  validateQuery(adminWithdrawalAuditQuerySchema),
+  getAdminWithdrawalAuditLog,
+);
+router.get(
+  "/withdrawal-requests/:id/audit-log",
   validateParams(adminWithdrawalIdParamSchema),
   validateQuery(adminWithdrawalAuditQuerySchema),
   getAdminWithdrawalAuditLog,

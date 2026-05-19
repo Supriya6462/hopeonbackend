@@ -71,6 +71,13 @@ router.get(
   withdrawalController.getOrganizerWithdrawals.bind(withdrawalController),
 );
 
+router.get(
+  "/my-requests",
+  authenticate,
+  authorize(Role.ORGANIZER),
+  withdrawalController.getOrganizerWithdrawals.bind(withdrawalController),
+);
+
 router.delete(
   "/:id/cancel",
   authenticate,

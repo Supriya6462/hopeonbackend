@@ -19,6 +19,8 @@ import withdrawalRoutes from "./src/Organizer/withdrawal.routes.js";
 import adminRoutes from "./src/Admin/admin.routes.js";
 import paymentRoutes from "./src/payments/payment.routes.js";
 import blockchainRoutes from "./src/Blockchain/blockchain.routes.js";
+import notificationRoutes from "./src/Notifications/notification.routes.js";
+import uploadRoutes from "./src/uploads/upload.routes.js";
 
 dotenv.config();
 connectDB();
@@ -144,9 +146,12 @@ app.use("/api/campaigns", campaignRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/organizer", organizerRoutes);
 app.use("/api/withdrawals", withdrawalRoutes);
+app.use("/api/withdrawal-requests", withdrawalRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/blockchain", blockchainRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/upload", uploadRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {
