@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/auth.middleware";
-import { initiatePayment, verifyPayment } from "./payment.controller";
+import {
+  initiatePayment,
+  verifyPayment,
+  webhookHandler,
+} from "./payment.controller";
 import { validateBody } from "../validation/validate";
 import {
   initiatePaymentSchema,
@@ -24,5 +28,8 @@ router.post(
   validateBody(verifyPaymentSchema),
   verifyPayment,
 );
+
+// Public webhook endpoint for providers
+router.post("/webhook/:provider", webhookHandler);
 
 export default router;

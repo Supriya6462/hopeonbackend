@@ -14,6 +14,9 @@ export interface IDonation extends Document {
   payerEmail?: string | null;
   payerName?: string | null;
   payerCountry?: string | null;
+  khaltiPidx?: string | null;
+  esewaTransactionUuid?: string | null;
+  providerResponse?: any | null;
   captureDetails?: any | null;
   blockchainHash?: string | null;
   status: "COMPLETED" | "PENDING" | "FAILED";
@@ -58,6 +61,13 @@ const DonationSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    khaltiPidx: { type: String, trim: true, index: true, default: null },
+    esewaTransactionUuid: {
+      type: String,
+      trim: true,
+      index: true,
+      default: null,
+    },
     transactionId: { type: String, required: true, unique: true, index: true },
     payerEmail: { type: String, lowercase: true, trim: true },
     payerName: String,
@@ -70,6 +80,7 @@ const DonationSchema = new mongoose.Schema(
       index: true,
     },
     captureDetails: { type: mongoose.Schema.Types.Mixed },
+    providerResponse: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },
 );
