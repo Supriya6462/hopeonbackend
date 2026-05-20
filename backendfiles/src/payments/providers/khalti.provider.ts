@@ -1,14 +1,16 @@
 import axios from "axios";
 import { InitiatePaymentDTO } from "../dto/initiate-payment.dto";
-import { IPaymentProvider, PaymentInitiateResponse, PaymentVerifyResponse } from "../payment.interface";
+import {
+  IPaymentProvider,
+  PaymentInitiateResponse,
+  PaymentVerifyResponse,
+} from "../payment.interface";
 import { VerifyPaymentDTO } from "../dto/verify-payment.dto";
 
 export class KhaltiProvider implements IPaymentProvider {
-
   async initiate(
-    payload: InitiatePaymentDTO
+    payload: InitiatePaymentDTO,
   ): Promise<PaymentInitiateResponse> {
-
     const response = await axios.post(
       "https://a.khalti.com/api/v2/epayment/initiate/",
       {
@@ -21,7 +23,7 @@ export class KhaltiProvider implements IPaymentProvider {
           Authorization: `Key ${process.env.KHALTI_SECRET_KEY}`,
         },
         timeout: 10000,
-      }
+      },
     );
 
     return {
@@ -29,10 +31,7 @@ export class KhaltiProvider implements IPaymentProvider {
     };
   }
 
-  async verify(
-    payload: VerifyPaymentDTO
-  ): Promise<PaymentVerifyResponse> {
-
+  async verify(payload: VerifyPaymentDTO): Promise<PaymentVerifyResponse> {
     const response = await axios.post(
       "https://a.khalti.com/api/v2/epayment/lookup/",
       {
@@ -42,7 +41,7 @@ export class KhaltiProvider implements IPaymentProvider {
         headers: {
           Authorization: `Key ${process.env.KHALTI_SECRET_KEY}`,
         },
-      }
+      },
     );
 
     const success = response.data.status === "Completed";
@@ -52,5 +51,12 @@ export class KhaltiProvider implements IPaymentProvider {
       providerTransactionId: payload.providerTransactionId,
       rawResponse: response.data,
     };
+  }
+
+  // Optional webhook validator: checks Authorization header matches expected key
+  async validateWebhook(req: any): Promise<boolean> {
+    const auth = req.headers?.authorization || req.headers?.Authorization;
+    if (!auth) return false;
+    return auth === `Key ${process.env.KHALTI_SECRET_KEY}`;
   }
 }

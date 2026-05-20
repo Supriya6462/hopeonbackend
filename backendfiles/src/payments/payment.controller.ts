@@ -3,6 +3,7 @@ import { asyncHandler } from "../middleware/errorHandler.middleware";
 import { paymentService } from "./payment.service";
 import { sendResponse } from "../utils/sendResponse";
 import { PaymentProvider } from "../types/enums";
+import { PaymentFactory } from "./payment.factory";
 import { Donation } from "../models/Donation.model";
 
 export const initiatePayment = asyncHandler(
@@ -113,6 +114,17 @@ export const webhookHandler = asyncHandler(
         statusCode: 404,
         message: "Donation not found for webhook",
       });
+    }
+
+    const providerStrategy = PaymentFactory.create(provider);
+    if (typeof (providerStrategy as any).validateWebhook === "function") {
+      const ok = await (providerStrategy as any).validateWebhook(req);
+      if (!ok) {
+        return sendResponse(res, {
+          statusCode: 401,
+          message: "Webhook validation failed",
+        });
+      }
     }
 
     await paymentService.verifyByDonation(

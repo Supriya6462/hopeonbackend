@@ -1,14 +1,22 @@
 import axios from "axios";
 import { InitiatePaymentDTO } from "../dto/initiate-payment.dto";
 import { VerifyPaymentDTO } from "../dto/verify-payment.dto";
-import { IPaymentProvider, PaymentInitiateResponse, PaymentVerifyResponse } from "../payment.interface";
+import {
+  IPaymentProvider,
+  PaymentInitiateResponse,
+  PaymentVerifyResponse,
+} from "../payment.interface";
 
 export class EsewaProvider implements IPaymentProvider {
   private readonly merchantId = process.env.ESEWA_MERCHANT_ID || "EPAYTEST";
-  private readonly paymentUrl = process.env.ESEWA_PAYMENT_URL || "https://uat.esewa.com.np/epay/main";
-  private readonly verifyUrl = process.env.ESEWA_VERIFY_URL || "https://uat.esewa.com.np/epay/transrec";
+  private readonly paymentUrl =
+    process.env.ESEWA_PAYMENT_URL || "https://uat.esewa.com.np/epay/main";
+  private readonly verifyUrl =
+    process.env.ESEWA_VERIFY_URL || "https://uat.esewa.com.np/epay/transrec";
 
-  async initiate(payload: InitiatePaymentDTO): Promise<PaymentInitiateResponse> {
+  async initiate(
+    payload: InitiatePaymentDTO,
+  ): Promise<PaymentInitiateResponse> {
     // eSewa uses form submission, not redirect URL
     const formData = {
       amount: payload.amount,
@@ -31,7 +39,7 @@ export class EsewaProvider implements IPaymentProvider {
   async verify(payload: VerifyPaymentDTO): Promise<PaymentVerifyResponse> {
     try {
       const response = await axios.get(
-        `${this.verifyUrl}?product_code=${this.merchantId}&transaction_uuid=${payload.providerTransactionId}`
+        `${this.verifyUrl}?product_code=${this.merchantId}&transaction_uuid=${payload.providerTransactionId}`,
       );
 
       const success = response.data.status === "COMPLETE";
@@ -48,5 +56,14 @@ export class EsewaProvider implements IPaymentProvider {
         rawResponse: error.response?.data || error.message,
       };
     }
+  }
+
+  // Optional webhook validator: ensure transaction_uuid exists in payload
+  async validateWebhook(req: any): Promise<boolean> {
+    const tid =
+      req.body?.transaction_uuid ||
+      req.body?.esewa_txn_uuid ||
+      req.query?.transaction_uuid;
+    return Boolean(tid);
   }
 }
