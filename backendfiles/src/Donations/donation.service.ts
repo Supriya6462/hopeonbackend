@@ -122,7 +122,7 @@ export class DonationService {
       donor: donorId,
       donorEmail: donationData.donorEmail.toLowerCase().trim(),
       amount,
-      method: "paypal",
+      method: donationData.method,
       isAnonymous: donationData.isAnonymous || false,
       transactionId:
         donationData.transactionId ||

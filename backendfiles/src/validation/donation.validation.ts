@@ -13,7 +13,7 @@ export const campaignIdParamSchema = z.object({
 export const createDonationSchema = z.object({
   campaign: objectIdSchema,
   amount: z.number().positive(),
-  method: z.literal(PaymentProvider.PAYPAL),
+  method: z.nativeEnum(PaymentProvider),
   donorEmail: z.string().trim().email(),
   transactionId: z.string().trim().min(1).optional(),
   isAnonymous: z.boolean().optional(),

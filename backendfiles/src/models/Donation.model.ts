@@ -1,4 +1,5 @@
 import mongoose, { Document } from "mongoose";
+import { PaymentProvider } from "../types/enums";
 
 export interface IDonation extends Document {
   _id: mongoose.Types.ObjectId;
@@ -7,7 +8,7 @@ export interface IDonation extends Document {
   donorEmail: string;
   isAnonymous: boolean;
   amount: number;
-  method: "paypal";
+  method: PaymentProvider;
   paypalOrderId?: string;
   transactionId: string;
   payerEmail?: string | null;
@@ -47,7 +48,11 @@ const DonationSchema = new mongoose.Schema(
       index: true,
     },
     amount: { type: Number, required: true, min: 0 },
-    method: { type: String, enum: ["paypal"], default: "paypal" },
+    method: {
+      type: String,
+      enum: Object.values(PaymentProvider),
+      default: PaymentProvider.PAYPAL,
+    },
     paypalOrderId: {
       type: String,
       trim: true,

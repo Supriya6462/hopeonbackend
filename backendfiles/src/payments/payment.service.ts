@@ -1,16 +1,16 @@
 import mongoose from "mongoose";
 import { Donation } from "../models/Donation.model";
 import { Campaign } from "../models/Campaign.model.js";
-import { DonationStatus } from "../types/enums";
+import { DonationStatus, PaymentProvider } from "../types/enums";
 import { InitiatePaymentDTO } from "./dto/initiate-payment.dto";
 import { VerifyPaymentDTO } from "./dto/verify-payment.dto";
-import { PayPalProvider } from "./providers/paypal.provider";
 import { ApiError } from "../utils/ApiError";
 import {
   createInAppNotification,
   NotificationEventType,
 } from "../services/notification.service.js";
 import { recordDonationBlock } from "../services/blockchain.service.js";
+import { PaymentFactory } from "./payment.factory";
 
 export class PaymentService {
   async initiate(
@@ -41,8 +41,8 @@ export class PaymentService {
       );
     }
 
-    // Get payment provider strategy
-    const strategy = new PayPalProvider();
+    // Get payment provider strategy from the donation's selected method
+    const strategy = PaymentFactory.create(donation.method as PaymentProvider);
 
     // Initiate payment with provider
     const result = await strategy.initiate({
@@ -52,7 +52,7 @@ export class PaymentService {
       returnUrl: payload.returnUrl,
     });
 
-    // Save transaction ID if provided (e.g., PayPal orderId, Khalti pidx)
+    // Save transaction ID if provided (e.g., PayPal orderId)
     if (result.formData?.orderId) {
       donation.transactionId = result.formData.orderId;
       donation.paypalOrderId = result.formData.orderId;
@@ -159,7 +159,7 @@ export class PaymentService {
       );
     }
 
-    const strategy = new PayPalProvider();
+    const strategy = PaymentFactory.create(donation.method as PaymentProvider);
 
     const verifyResult = await strategy.verify({
       donationId: donation._id.toString(),
@@ -185,7 +185,9 @@ export class PaymentService {
       donation.status = DonationStatus.COMPLETED;
       donation.captureDetails = verifyResult.rawResponse;
       donation.transactionId = verifyResult.providerTransactionId;
-      donation.paypalOrderId = verifyResult.providerTransactionId;
+      if (donation.method === PaymentProvider.PAYPAL) {
+        donation.paypalOrderId = verifyResult.providerTransactionId;
+      }
 
       const donationBlock = await recordDonationBlock({
         donorName: donation.payerName || "Anonymous Donor",
